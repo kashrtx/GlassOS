@@ -407,10 +407,10 @@ class StorageProvider(QObject):
         """Get list of desktop icons, synced with actual filesystem."""
         
         # 1. Define Standard System Icons (Always present unless user hid them, but for now we enforce)
-        system_apps = ["Computer", "Recycle Bin", "Documents", "Calculator", "AeroBrowser", "GlassPad"]
+        system_icon_names = {"Computer", "Recycle Bin", "Documents", "Calculator", "AeroBrowser", "GlassPad"}
         
         # 2. Get real files on Desktop
-        desktop_path = self._storage_root / "User" / "Desktop"
+        desktop_path = self._storage_root / "Desktop"
         real_files = set()
         if desktop_path.exists():
             for item in desktop_path.iterdir():
@@ -423,9 +423,9 @@ class StorageProvider(QObject):
         if self._desktop_icons:
             for icon in self._desktop_icons:
                 name = icon.get("name", "")
-                is_system = icon.get("app") in system_apps or name in system_apps
-                
-                # Keep if it's a system app OR if the file exists on disk
+                is_system = name in system_icon_names
+
+                # Keep if it's a system icon OR if the file exists on disk
                 if is_system or name in real_files:
                     current_icons.append(icon)
         

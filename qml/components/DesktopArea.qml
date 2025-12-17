@@ -153,16 +153,13 @@ Item {
                             var spot = getNextFreeSpot(drop.x, drop.y)
                             
                             var newIcons = icons.slice()
-                            newIcons.push({ 
-                                name: sourceName, 
+                            newIcons.push({
+                                name: sourceName,
                                 icon: isDir ? "📁" : "📄", // Simple fallback icon logic
                                 app: isDir ? "AeroExplorer" : "GlassPad", // Simple app association
-                                x: spot.x, 
-                                y: spot.y 
+                                x: spot.x,
+                                y: spot.y
                             })
-                            icons = newIcons
-                            icons = newIcons
-                            icons = newIcons
                             icons = newIcons
                             root.saveIcons()
                             refreshIcons()
@@ -178,8 +175,6 @@ Item {
                              var grid = 20
                              newIcons[sourceIndex].x = Math.round(drop.x / grid) * grid
                              newIcons[sourceIndex].y = Math.round(drop.y / grid) * grid
-                             icons = newIcons
-                             icons = newIcons
                              icons = newIcons
                              root.saveIcons()
                          }
