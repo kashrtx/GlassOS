@@ -12,6 +12,7 @@ Rectangle {
     property bool isSnappedLeft: false
     property bool isSnappedRight: false
     property bool isMinimized: false
+    property bool dragging: false // Track dragging state
     
     // Taskbar position for genie animation
     property real taskbarCenterX: parent ? parent.width / 2 : 400
@@ -135,12 +136,11 @@ Rectangle {
                 anchors.rightMargin: 130
                 
                 property point clickPos
-                property bool dragging: false
                 property string snapZone: ""
                 
                 onPressed: function(mouse) {
                     clickPos = Qt.point(mouse.x, mouse.y)
-                    dragging = false
+                    glassWindow.dragging = false
                     snapZone = ""
                     glassWindow.z = 100
                     glassWindow.activated()
@@ -148,7 +148,8 @@ Rectangle {
                 
                 onPositionChanged: function(mouse) {
                     if (pressed) {
-                        dragging = true
+                        glassWindow.dragging = true
+
                         
                         // Unsnap if dragging from snapped state
                         if (isSnappedLeft || isSnappedRight || isMaximized) {
@@ -226,6 +227,7 @@ Rectangle {
                         constrainToBounds()
                     }
                     snapZone = ""
+                    glassWindow.dragging = false
                 }
                 
                 onDoubleClicked: toggleMaximize()
@@ -710,12 +712,13 @@ Rectangle {
     }
     
     // Smooth animations for position/size changes when snapping
+    // Smooth animations for position/size changes when snapping, but NOT dragging
     Behavior on x { 
-        enabled: !minimizeAnim.running && !restoreAnim.running
+        enabled: !minimizeAnim.running && !restoreAnim.running && !dragging
         NumberAnimation { duration: 150; easing.type: Easing.OutCubic } 
     }
     Behavior on y { 
-        enabled: !minimizeAnim.running && !restoreAnim.running
+        enabled: !minimizeAnim.running && !restoreAnim.running && !dragging
         NumberAnimation { duration: 150; easing.type: Easing.OutCubic } 
     }
     Behavior on width { 

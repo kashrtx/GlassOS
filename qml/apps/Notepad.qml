@@ -8,8 +8,8 @@ Rectangle {
     color: "transparent"
     
     // Bind to System Accessibility
-    property int baseFontSize: Accessibility.baseFontSize
-    property bool useBold: Accessibility.boldText
+    property int baseFontSize: (typeof Accessibility !== "undefined" && Accessibility) ? Accessibility.baseFontSize : 14
+    property bool useBold: (typeof Accessibility !== "undefined" && Accessibility) ? Accessibility.boldText : false
     property int fontSize: baseFontSize // Validated default
     
     // Watch for system changes to reset/update

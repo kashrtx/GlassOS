@@ -40,7 +40,7 @@ ApplicationWindow {
         Image {
             id: wallpaperImage
             anchors.fill: parent
-            source: Storage.getWallpaperUrl()
+            source: Storage.wallpaperUrl
             fillMode: Image.PreserveAspectCrop
             visible: source !== ""
             asynchronous: true
@@ -92,29 +92,6 @@ ApplicationWindow {
         }
     }
     
-    // Desktop Area
-    DesktopArea {
-        id: desktopArea
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.top: parent.top
-        anchors.bottom: taskbar.top
-        z: 0
-        
-        onOpenApp: function(appName) {
-            launchApp(appName)
-        }
-    }
-    
-    // Window container
-    Item {
-        id: windowContainer
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.top: parent.top
-        anchors.bottom: taskbar.top
-        z: 10
-    }
     
     // ===== AERO WARNING DIALOG =====
     Rectangle {
@@ -238,6 +215,11 @@ ApplicationWindow {
         }
     }
     
+    // Connect to ResourceMonitor
+    Connections {
+        target: typeof ResourceMonitor !== 'undefined' ? ResourceMonitor : null
+    }
+    
     // Start Menu
     StartMenu {
         id: startMenu
@@ -251,7 +233,7 @@ ApplicationWindow {
         z: 500
         
         onAppLaunched: function(appName) {
-            launchApp(appName)
+            launchApp(appName, {})
             startMenu.visible = false
         }
     }
@@ -297,6 +279,15 @@ ApplicationWindow {
     
     // Close a window with animation
     function closeWindow(win) {
+        if (!win) return
+        
+        // Remove from list immediately to prevent re-interactions
+        var idx = openWindows.indexOf(win)
+        if (idx !== -1) {
+            openWindows.splice(idx, 1)
+            updateTaskbar()
+        }
+        
         // Animate out
         closeAnim.target = win
         closeAnim.start()
@@ -324,19 +315,47 @@ ApplicationWindow {
         
         onFinished: {
             if (target) {
-                var idx = openWindows.indexOf(target)
-                if (idx !== -1) {
-                    openWindows.splice(idx, 1)
-                }
                 target.destroy()
-                updateTaskbar()
+                target = null
             }
         }
     }
     
+    // Desktop Area
+    DesktopArea {
+        id: desktopRoot // Renamed from desktopArea to avoid conflicts
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.bottom: taskbar.top // Taskbar is defined later
+        z: 0
+        
+        onOpenApp: function(appName, params) {
+            launchApp(appName, params)
+        }
+    }
+    
+    // Window container
+    Item {
+        id: windowContainer
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.bottom: taskbar.top
+        z: 10
+    }
+    
+    
+    function showError(title, message) {
+        errorDialog.errorTitle = title
+        errorDialog.errorMessage = message
+        errorDialog.visible = true
+    }
+
     // Launch app function
-    function launchApp(appName) {
-        console.log("Launching:", appName)
+    function launchApp(appName, params) {
+        console.log("Launching:", appName, "with params:", JSON.stringify(params))
+        var path = params ? params.path : ""
         
         var xPos = 80 + (windowCounter % 6) * 35
         var yPos = 50 + (windowCounter % 6) * 30
@@ -361,12 +380,41 @@ ApplicationWindow {
                     })
                     break
                 case "AeroExplorer":
+                case "Explorer":
                     win = explorerComponent.createObject(windowContainer, {
                         x: xPos, y: yPos,
-                        windowTitle: "AeroExplorer",
+                        windowTitle: "File Explorer",
                         windowIcon: "📁",
                         width: 800, height: 500
                     })
+                    if (win && path) {
+                        var expChild = null
+                        for (var i = 0; i < win.content.length; i++) {
+                            if (win.content[i].hasOwnProperty("initialPath")) {
+                                expChild = win.content[i]
+                                break
+                            }
+                        }
+                        if (expChild) expChild.initialPath = path
+                    }
+                    break
+                case "RecycleBin":
+                    win = explorerComponent.createObject(windowContainer, {
+                        x: xPos, y: yPos,
+                        windowTitle: "Recycle Bin",
+                        windowIcon: "🗑",
+                        width: 800, height: 500
+                    })
+                    if (win) {
+                        var expChild = null
+                        for (var i = 0; i < win.content.length; i++) {
+                            if (win.content[i].hasOwnProperty("initialPath")) {
+                                expChild = win.content[i]
+                                break
+                            }
+                        }
+                        if (expChild) expChild.initialPath = "/Recycle Bin"
+                    }
                     break
                 case "Weather":
                     win = weatherComponent.createObject(windowContainer, {
@@ -599,155 +647,6 @@ ApplicationWindow {
     }
 
     
-    // Error dialog
-    function showError(title, message) {
-        errorTitleText.text = title
-        errorMessageText.text = message
-        errorOverlay.visible = true
-    }
-    
-    Rectangle {
-        id: errorOverlay
-        anchors.fill: parent
-        color: Qt.rgba(0, 0, 0, 0.5)
-        visible: false
-        z: 9000
-        
-        MouseArea { anchors.fill: parent; onClicked: { } }
-        
-        Rectangle {
-            anchors.centerIn: parent
-            width: 360
-            height: 160
-            radius: 8
-            color: Qt.rgba(0.15, 0.15, 0.2, 0.98)
-            border.width: 1
-            border.color: "#cc3333"
-            
-            Column {
-                anchors.fill: parent
-                spacing: 0
-                
-                Rectangle {
-                    width: parent.width
-                    height: 32
-                    color: "#aa2222"
-                    radius: 8
-                    
-                    Rectangle {
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.bottom: parent.bottom
-                        height: 10
-                        color: parent.color
-                    }
-                    
-                    Text {
-                        id: errorTitleText
-                        anchors.left: parent.left
-                        anchors.leftMargin: 12
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "Error"
-                        font.pixelSize: 13
-                        font.bold: true
-                        color: "#ffffff"
-                    }
-                    
-                    Rectangle {
-                        anchors.right: parent.right
-                        anchors.top: parent.top
-                        anchors.margins: 4
-                        width: 26
-                        height: 22
-                        radius: 4
-                        color: closeErrorMouse.containsMouse ? "#ff5555" : "transparent"
-                        
-                        Text {
-                            anchors.centerIn: parent
-                            text: "✕"
-                            font.pixelSize: 10
-                            color: "#ffffff"
-                        }
-                        
-                        MouseArea {
-                            id: closeErrorMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            onClicked: errorOverlay.visible = false
-                        }
-                    }
-                }
-                
-                Item {
-                    width: parent.width
-                    height: parent.height - 32
-                    
-                    Row {
-                        anchors.left: parent.left
-                        anchors.top: parent.top
-                        anchors.margins: 16
-                        spacing: 16
-                        
-                        Rectangle {
-                            width: 40
-                            height: 40
-                            radius: 20
-                            color: "#cc3333"
-                            
-                            Text {
-                                anchors.centerIn: parent
-                                text: "!"
-                                font.pixelSize: 24
-                                font.bold: true
-                                color: "#ffffff"
-                            }
-                        }
-                        
-                        Text {
-                            id: errorMessageText
-                            width: 260
-                            text: "An error occurred."
-                            font.pixelSize: 13
-                            color: "#ffffff"
-                            wrapMode: Text.Wrap
-                        }
-                    }
-                    
-                    Rectangle {
-                        anchors.right: parent.right
-                        anchors.bottom: parent.bottom
-                        anchors.margins: 16
-                        width: 80
-                        height: 30
-                        radius: 4
-                        color: okBtnMouse.containsMouse ? Qt.rgba(1,1,1,0.2) : Qt.rgba(1,1,1,0.1)
-                        border.width: 1
-                        border.color: Qt.rgba(1,1,1,0.3)
-                        
-                        Text {
-                            anchors.centerIn: parent
-                            text: "OK"
-                            font.pixelSize: 12
-                            color: "#ffffff"
-                        }
-                        
-                        MouseArea {
-                            id: okBtnMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            onClicked: errorOverlay.visible = false
-                        }
-                    }
-                }
-            }
-            
-            scale: errorOverlay.visible ? 1.0 : 0.9
-            opacity: errorOverlay.visible ? 1.0 : 0
-            Behavior on scale { NumberAnimation { duration: 150 } }
-            Behavior on opacity { NumberAnimation { duration: 150 } }
-        }
-    }
-    
     // Shortcuts
     Shortcut {
         sequence: "Ctrl+Q"
@@ -778,7 +677,7 @@ ApplicationWindow {
         
         ParallelAnimation {
             NumberAnimation {
-                target: desktopArea
+                target: desktopRoot
                 property: "opacity"
                 from: 0
                 to: 1

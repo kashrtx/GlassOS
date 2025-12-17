@@ -23,8 +23,8 @@ Rectangle {
     
     // Safe font sizes
     property var fontSizes: [10, 12, 14, 16] // Small, Normal, Large, XLarge
-    property int currentFontSize: Accessibility.baseFontSize
-    property bool isBold: Accessibility.boldText // Bind to Accessibility
+    property int currentFontSize: (typeof Accessibility !== "undefined" && Accessibility) ? Accessibility.baseFontSize : 12
+    property bool isBold: (typeof Accessibility !== "undefined" && Accessibility) ? Accessibility.boldText : false
     
     property var sections: [
         { name: "Personalization", icon: "🎨" },
@@ -105,7 +105,7 @@ Rectangle {
                     model: sections
                     Rectangle {
                         Layout.fillWidth: true
-                        height: 32
+                        height: Math.max(32, currentFontSize * 2.2)
                         radius: 4
                         color: currentSection === index ? Qt.rgba(0.3, 0.5, 0.8, 0.5) : 
                                (sectionMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.1) : "transparent")
@@ -257,9 +257,17 @@ Rectangle {
                                     width: parent.width
                                     anchors.horizontalCenter: parent.horizontalCenter
                                     text: "Place images in Storage/User/Pictures/Wallpapers"
-                                    font.pixelSize: currentFontSize-2
                                     font.bold: isBold
                                     color: "#666"
+                                    horizontalAlignment: Text.AlignHCenter
+                                    wrapMode: Text.Wrap
+                                }
+                                Text {
+                                    width: parent.width
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    text: "Looking in: " + Storage.storageRoot + "/Pictures/Wallpapers"
+                                    font.pixelSize: 9
+                                    color: "#555"
                                     horizontalAlignment: Text.AlignHCenter
                                     wrapMode: Text.Wrap
                                 }
@@ -289,7 +297,7 @@ Rectangle {
                                         model: ["Small", "Normal", "Large", "XLarge"]
                                         Rectangle {
                                             width: 70; height: 36; radius: 4
-                                            color: Accessibility.fontSizePreset === index ? "#4a9eff" : Qt.rgba(1,1,1,0.1)
+                                            color: (typeof Accessibility !== "undefined" && Accessibility && Accessibility.fontSizePreset === index) ? "#4a9eff" : Qt.rgba(1,1,1,0.1)
                                             Text {
                                                 anchors.centerIn: parent
                                                 text: modelData
@@ -297,7 +305,7 @@ Rectangle {
                                                 font.bold: isBold
                                                 color: "#fff"
                                             }
-                                            MouseArea { anchors.fill: parent; onClicked: Accessibility.setFontSizePreset(index) }
+                                            MouseArea { anchors.fill: parent; onClicked: if(typeof Accessibility !== "undefined") Accessibility.setFontSizePreset(index) }
                                         }
                                     }
                                 }
@@ -308,9 +316,9 @@ Rectangle {
                                 spacing: 14
                                 Rectangle {
                                     width: 24; height: 24; radius: 4
-                                    color: Accessibility.boldText ? "#4a9eff" : Qt.rgba(1,1,1,0.1)
+                                    color: (typeof Accessibility !== "undefined" && Accessibility && Accessibility.boldText) ? "#4a9eff" : Qt.rgba(1,1,1,0.1)
                                     Text { anchors.centerIn: parent; text: "B"; font.bold: true; color: "#fff" }
-                                    MouseArea { anchors.fill: parent; onClicked: Accessibility.setBoldText(!Accessibility.boldText) }
+                                    MouseArea { anchors.fill: parent; onClicked: if(typeof Accessibility !== "undefined") Accessibility.setBoldText(!Accessibility.boldText) }
                                 }
                                 Text { 
                                     text: "Bold Text"
@@ -338,14 +346,14 @@ Rectangle {
                             Column {
                                 spacing: 4
                                 Text { text: "CPU"; color: "#888"; font.pixelSize: 10; font.bold: isBold }
-                                Rectangle { width: 100; height: 6; radius: 3; color: "#333"; Rectangle { width: parent.width * (ResourceMonitor.cpuPercent/100); height: 6; radius: 3; color: "#4a9eff" } }
-                                Text { text: Math.round(ResourceMonitor.cpuPercent)+"%"; color:"#fff"; font.bold: true }
+                                Rectangle { width: 100; height: 6; radius: 3; color: "#333"; Rectangle { width: parent.width * ((typeof ResourceMonitor !== "undefined" && ResourceMonitor) ? ResourceMonitor.cpuPercent/100 : 0); height: 6; radius: 3; color: "#4a9eff" } }
+                                Text { text: Math.round((typeof ResourceMonitor !== "undefined" && ResourceMonitor) ? ResourceMonitor.cpuPercent : 0)+"%"; color:"#fff"; font.bold: true }
                             }
                             Column {
                                 spacing: 4
                                 Text { text: "RAM"; color: "#888"; font.pixelSize: 10; font.bold: isBold }
-                                Rectangle { width: 100; height: 6; radius: 3; color: "#333"; Rectangle { width: parent.width * (ResourceMonitor.memoryPercent/100); height: 6; radius: 3; color: "#41cd52" } }
-                                Text { text: ResourceMonitor.memoryUsedGB + " GB"; color:"#fff"; font.bold: true }
+                                Rectangle { width: 100; height: 6; radius: 3; color: "#333"; Rectangle { width: parent.width * ((typeof ResourceMonitor !== "undefined" && ResourceMonitor) ? ResourceMonitor.memoryPercent/100 : 0); height: 6; radius: 3; color: "#41cd52" } }
+                                Text { text: ((typeof ResourceMonitor !== "undefined" && ResourceMonitor) ? ResourceMonitor.memoryUsedGB : "0") + " GB"; color:"#fff"; font.bold: true }
                             }
                         }
                     }

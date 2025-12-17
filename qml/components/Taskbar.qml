@@ -43,11 +43,17 @@ Rectangle {
     onRunningWindowsChanged: groupedApps = getGroupedApps()
     
     // Premium dark glass background
+    // Premium glass background
+    color: Qt.rgba(0.08, 0.10, 0.15, 0.85) // Translucent dark glass
+    border.width: 1
+    border.color: Qt.rgba(1, 1, 1, 0.1)
+    
+    /* Removed old gradient
     gradient: Gradient {
         GradientStop { position: 0.0; color: Qt.rgba(0.12, 0.14, 0.20, 0.95) }
         GradientStop { position: 0.3; color: Qt.rgba(0.08, 0.10, 0.15, 0.95) }
         GradientStop { position: 1.0; color: Qt.rgba(0.05, 0.06, 0.10, 0.95) }
-    }
+    } */
     
     // Top highlight
     Rectangle {
@@ -165,7 +171,7 @@ Rectangle {
                     return false
                 }
                 
-                property bool hovered: groupMouse.containsMouse || (previewPopupLoader.item && previewPopupLoader.item.containsMouse)
+                property bool hovered: groupMouse.containsMouse || previewPopup.opened
                 
                 gradient: Gradient {
                     GradientStop { position: 0.0; color: isActive ? Qt.rgba(0.3, 0.5, 0.8, 0.5) : (hovered ? Qt.rgba(1,1,1,0.15) : Qt.rgba(1,1,1,0.05)) }
@@ -207,11 +213,73 @@ Rectangle {
                     id: groupMouse
                     anchors.fill: parent
                     hoverEnabled: true
-                    onClicked: {
-                        if (!hasMultiple) {
-                            var win = modelData.windows[0]
-                            if(win.visible && !win.isMinimized) win.minimizeWindow()
-                            else { win.visible=true; win.z=100; if(win.isMinimized) win.restoreFromMinimize(); taskbar.taskbarAppClicked(win) }
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    
+                    onClicked: function(mouse) {
+                        if (mouse.button === Qt.RightButton) {
+                            taskbarContextMenu.open()
+                        } else {
+                            if (!hasMultiple) {
+                                var win = modelData.windows[0]
+                                if(win.visible && !win.isMinimized) win.minimizeWindow()
+                                else { win.visible=true; win.z=100; if(win.isMinimized) win.restoreFromMinimize(); taskbar.taskbarAppClicked(win) }
+                            } else {
+                                if (previewPopup.opened) previewPopup.close()
+                                else previewPopup.open()
+                            }
+                        }
+                    }
+                }
+                
+                Popup {
+                    id: taskbarContextMenu
+                    y: -height - 10
+                    x: 0
+                    width: 180
+                    height: 40
+                    padding: 0
+                    modal: true
+                    focus: true
+                    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                    
+                    background: Rectangle {
+                        color: Qt.rgba(0.1, 0.12, 0.18, 0.95)
+                        radius: 6
+                        border.width: 1
+                        border.color: "#666"
+                    }
+                    
+                    Rectangle {
+                        width: parent.width - 4
+                        height: 32
+                        anchors.centerIn: parent
+                        color: "transparent"
+                        
+                        Row {
+                            anchors.fill: parent
+                            anchors.leftMargin: 10
+                            spacing: 12
+                            Text { anchors.verticalCenter: parent.verticalCenter; text: "❌"; font.pixelSize: 12 }
+                            Text { anchors.verticalCenter: parent.verticalCenter; text: "Close All Windows"; color: "#fff"; font.pixelSize: 11 }
+                        }
+                        
+                        Rectangle {
+                            anchors.fill: parent
+                            color: closeAllMouse.containsMouse ? Qt.rgba(1,1,1,0.1) : "transparent"
+                            radius: 4
+                        }
+                        
+                        MouseArea {
+                            id: closeAllMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            onClicked: {
+                                // Close all windows in this group
+                                var wins = []
+                                for(var i=0; i<modelData.windows.length; i++) wins.push(modelData.windows[i])
+                                for(var j=0; j<wins.length; j++) taskbar.taskbarAppClosed(wins[j])
+                                taskbarContextMenu.close()
+                            }
                         }
                     }
                 }
@@ -226,10 +294,14 @@ Rectangle {
                 
                 Popup {
                     id: previewPopup
+                    property bool useListMode: modelData.windows.length > 5
+                    
                     y: -height - 10
                     x: (parent.width - width) / 2
-                    width: hasMultiple ? Math.min(600, modelData.windows.length * 200) : 200
-                    height: 150
+                    
+                    width: useListMode ? 220 : Math.min(600, modelData.windows.length * 200)
+                    height: useListMode ? Math.min(400, modelData.windows.length * 36 + 16) : 150
+                    
                     padding: 0
                     modal: false
                     focus: true
@@ -257,7 +329,7 @@ Rectangle {
                             running: true
                             repeat: true
                             onTriggered: {
-                                if (!groupMouse.containsMouse && !popupMouse.containsMouse) {
+                                if (!groupMouse.containsMouse && !popupMouse.containsMouse && !previewPopup.opened) {
                                     previewPopup.close()
                                 }
                             }
@@ -267,38 +339,20 @@ Rectangle {
                         ListView {
                             anchors.fill: parent
                             anchors.margins: 8
-                            orientation: ListView.Horizontal
-                            spacing: 8
+                            orientation: previewPopup.useListMode ? ListView.Vertical : ListView.Horizontal
+                            spacing: previewPopup.useListMode ? 4 : 8
                             model: modelData.windows
+                            clip: true
+                            
                             delegate: Rectangle {
-                                width: 180; height: parent.height
-                                color: Qt.rgba(1,1,1,0.05)
+                                width: previewPopup.useListMode ? parent.width : 180
+                                height: previewPopup.useListMode ? 32 : parent.height
+                                color: Qt.rgba(0.2, 0.22, 0.28, 0.6)
+                                border.width: 1
+                                border.color: Qt.rgba(1, 1, 1, 0.1)
                                 radius: 4
                                 
-                                Column {
-                                    anchors.fill: parent; anchors.margins: 4; spacing: 4
-                                    Row {
-                                        width: parent.width; spacing: 4
-                                        Text { text: modelData.windowIcon; font.pixelSize: 12 }
-                                        Text { width: parent.width - 30; text: modelData.windowTitle; color: "#fff"; font.pixelSize: 11; elide: Text.ElideRight }
-                                        Text { text: "✕"; color: "#ff5555"; font.bold: true; MouseArea { anchors.fill: parent; onClicked: taskbar.taskbarAppClosed(modelData) } }
-                                    }
-                                    
-                                    // Live preview if not minimized
-                                    ShaderEffectSource {
-                                        width: parent.width; height: parent.height - 24
-                                        sourceItem: modelData.visible && !modelData.isMinimized ? modelData : null
-                                        live: true
-                                        visible: sourceItem !== null
-                                        
-                                        Rectangle {
-                                            anchors.fill: parent
-                                            color: "black"
-                                            visible: modelData.isMinimized
-                                            Text { anchors.centerIn: parent; text: "Minimized"; color: "gray" }
-                                        }
-                                    }
-                                }
+                                // Main click handler (Background)
                                 MouseArea {
                                     anchors.fill: parent
                                     onClicked: {
@@ -306,6 +360,120 @@ Rectangle {
                                         if(modelData.isMinimized) modelData.restoreFromMinimize()
                                         taskbar.taskbarAppClicked(modelData)
                                         previewPopup.close()
+                                    }
+                                }
+                                
+                                // List Mode Layout
+                                Row {
+                                    visible: previewPopup.useListMode
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 8; anchors.rightMargin: 8
+                                    spacing: 8
+                                    
+                                    Text { 
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: modelData.windowIcon; font.pixelSize: 14 
+                                    }
+                                    
+                                    Text { 
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        width: parent.width - 40
+                                        text: modelData.windowTitle
+                                        color: "#fff"
+                                        font.pixelSize: 11
+                                        elide: Text.ElideRight 
+                                    }
+                                    
+                                    Rectangle {
+                                        width: 18; height: 18
+                                        color: closeListMouse.containsMouse ? "#cc3333" : "transparent"
+                                        radius: 3
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        z: 5
+                                        
+                                        Text { anchors.centerIn: parent; text: "✕"; color: "#fff"; font.pixelSize: 10 }
+                                        MouseArea {
+                                            id: closeListMouse
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            z: 10
+                                            onClicked: {
+                                                console.log("Taskbar: Closing app from list preview")
+                                                taskbar.taskbarAppClosed(modelData)
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                // Grid Mode Layout
+                                Item {
+                                    visible: !previewPopup.useListMode
+                                    anchors.fill: parent
+                                    anchors.margins: 4
+                                    
+                                    // Header
+                                    Item {
+                                        id: header
+                                        width: parent.width
+                                        height: 20
+                                        
+                                        Row {
+                                            anchors.left: parent.left
+                                            anchors.right: closeBtn.left
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            spacing: 6
+                                            
+                                            Text { text: modelData.windowIcon; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
+                                            Text { 
+                                                width: parent.width - 25
+                                                text: modelData.windowTitle
+                                                color: "#fff"
+                                                font.pixelSize: 11
+                                                elide: Text.ElideRight
+                                                anchors.verticalCenter: parent.verticalCenter
+                                            }
+                                        }
+                                        
+                                        Rectangle {
+                                            id: closeBtn
+                                            anchors.right: parent.right
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            width: 18; height: 18
+                                            radius: 3
+                                            color: closeMouse.containsMouse ? "#cc3333" : "transparent"
+                                            
+                                            Text { anchors.centerIn: parent; text: "✕"; color: "#fff"; font.pixelSize: 10 }
+                                            
+                                            MouseArea {
+                                                id: closeMouse
+                                                anchors.fill: parent
+                                                hoverEnabled: true
+                                                z: 10
+                                                onClicked: {
+                                                    console.log("Taskbar: Closing app from grid preview")
+                                                    taskbar.taskbarAppClosed(modelData)
+                                                }
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Live preview if not minimized
+                                    ShaderEffectSource {
+                                        anchors.top: header.bottom
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        anchors.bottom: parent.bottom
+                                        anchors.topMargin: 4
+                                        sourceItem: modelData.visible && !modelData.isMinimized ? modelData : null
+                                        live: true
+                                        visible: sourceItem !== null
+                                        
+                                        Rectangle {
+                                            anchors.fill: parent
+                                            color: Qt.rgba(0,0,0,0.5)
+                                            visible: modelData.isMinimized
+                                            Text { anchors.centerIn: parent; text: "Minimized"; color: "#888"; font.pixelSize: 10 }
+                                        }
                                     }
                                 }
                             }
@@ -318,20 +486,25 @@ Rectangle {
         // System Tray
         Row {
             Layout.alignment: Qt.AlignRight
-            Layout.rightMargin: 10
-            spacing: 8
+            Layout.rightMargin: 0
+            spacing: 0
             
             // Network
             Item {
-                width: 32; height: 40
-                Text { anchors.centerIn: parent; text: "📶"; font.pixelSize: 16; color: "#fff" }
-                MouseArea { anchors.fill: parent; hoverEnabled: true; ToolTip.visible: containsMouse; ToolTip.text: "Network: Connected" }
+                width: 32; height: 48
+                Text { anchors.centerIn: parent; text: "📶"; font.pixelSize: 14; color: "#fff"; opacity: 0.8 }
+                MouseArea { anchors.fill: parent; hoverEnabled: true; ToolTip.visible: containsMouse; ToolTip.text: "Connected" }
             }
             
             // Volume
             Item {
-                width: 32; height: 40
-                Text { anchors.centerIn: parent; text: volumeLevel > 0 ? "🔊" : "🔇"; font.pixelSize: 16; color: "#fff" }
+                width: 36; height: 48
+                Text { 
+                    anchors.centerIn: parent
+                    text: volumeLevel === 0 ? "🔇" : (volumeLevel < 33 ? "🔈" : (volumeLevel < 66 ? "🔉" : "🔊"))
+                    font.pixelSize: 14; color: "#fff"; opacity: 0.8 
+                }
+                
                 MouseArea {
                     id: volMouse
                     anchors.fill: parent
@@ -341,65 +514,131 @@ Rectangle {
                 
                 Popup {
                     id: volPopup
-                    y: -height - 10
-                    x: -width/2 + parent.width/2
-                    width: 40
-                    height: 120
+                    y: -height - 12
+                    x: -width + parent.width + 5
+                    width: 200
+                    height: 50
                     modal: false
                     focus: true
                     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
                     
                     background: Rectangle {
-                        color: Qt.rgba(0.1, 0.12, 0.18, 0.95); radius: 6
-                        border.width: 1; border.color: "#4a9eff"
+                        color: Qt.rgba(0.1, 0.12, 0.18, 0.95); radius: 8
+                        border.width: 1; border.color: Qt.rgba(0.4, 0.6, 0.9, 0.3)
+                        
+                        // Shadow
+                        Rectangle {
+                            anchors.fill: parent; anchors.margins: -4; z: -1; radius: 12; color: Qt.rgba(0,0,0,0.5)
+                        }
                     }
                     
-                    Column {
-                        anchors.centerIn: parent
-                        spacing: 10
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        spacing: 12
+                        
+                        Text { text: "🔊"; font.pixelSize: 14; color: "#fff" }
+                        
                         Slider {
                             id: volSlider
-                            orientation: Qt.Vertical
+                            Layout.fillWidth: true
                             from: 0; to: 100
                             value: volumeLevel
-                            height: 80
                             onMoved: Storage.setSystemVolume(value)
+                            
+                            background: Rectangle {
+                                x: volSlider.leftPadding
+                                y: volSlider.topPadding + volSlider.availableHeight / 2 - height / 2
+                                implicitWidth: 200
+                                implicitHeight: 4
+                                width: volSlider.availableWidth
+                                height: implicitHeight
+                                radius: 2
+                                color: Qt.rgba(1,1,1,0.1)
+                                
+                                Rectangle {
+                                    width: volSlider.visualPosition * parent.width
+                                    height: parent.height
+                                    color: "#4a9eff"
+                                    radius: 2
+                                }
+                            }
+                            
+                            handle: Rectangle {
+                                x: volSlider.leftPadding + volSlider.visualPosition * (volSlider.availableWidth - width)
+                                y: volSlider.topPadding + volSlider.availableHeight / 2 - height / 2
+                                implicitWidth: 14
+                                implicitHeight: 14
+                                radius: 7
+                                color: volSlider.pressed ? "#fff" : "#eee"
+                                border.width: 1
+                                border.color: "#4a9eff"
+                            }
                         }
-                        Text { text: Math.round(volumeLevel); color: "#fff"; font.pixelSize: 10 }
+                        
+                        Text { 
+                            text: Math.round(volumeLevel)
+                            color: "#fff"; font.pixelSize: 11; font.bold: true
+                            Layout.preferredWidth: 25
+                        }
                     }
                 }
             }
             
             // Clock
             Rectangle {
-                width: 70; height: 40
-                color: "transparent"
+                width: 80; height: 48
+                color: clockMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.08) : "transparent"
+                
                 Column {
                     anchors.centerIn: parent
+                    spacing: -2
                     Text { 
                         text: Qt.formatTime(new Date(), "h:mm AP")
-                        color: "#fff"; font.pixelSize: 12
+                        color: "#fff"; font.pixelSize: 12; font.weight: Font.Medium
+                        anchors.horizontalCenter: parent.horizontalCenter
                     }
                     Text { 
                         text: Qt.formatDate(new Date(), "M/d/yyyy")
-                        color: "#ccc"; font.pixelSize: 10
+                        color: "#aaa"; font.pixelSize: 10
+                        anchors.horizontalCenter: parent.horizontalCenter
                     }
                 }
-                Timer { interval: 1000; running: true; repeat: true; onTriggered: parent.children[0].children[0].text = Qt.formatTime(new Date(), "h:mm AP") }
+                
+                MouseArea {
+                    id: clockMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                }
+                
+                Timer { interval: 1000; running: true; repeat: true; onTriggered: {} }
             }
             
-            // Show Desktop
+            // Show Desktop Button (Windows style)
             Rectangle {
-                width: 6; height: 40
-                color: showDesktopMouse.containsMouse ? Qt.rgba(1,1,1,0.3) : "transparent"
+                width: 12; height: 48
+                color: showDesktopMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.15) : "transparent"
+                
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    width: 1
+                    color: Qt.rgba(1, 1, 1, 0.1)
+                }
+                
                 MouseArea {
                     id: showDesktopMouse
                     anchors.fill: parent
                     hoverEnabled: true
                     onClicked: {
-                         for(var i=0; i<runningWindows.length; i++) if(runningWindows[i]) runningWindows[i].minimizeWindow()
+                        for(var i=0; i<runningWindows.length; i++) {
+                            if(runningWindows[i]) runningWindows[i].minimizeWindow()
+                        }
                     }
-                    ToolTip.visible: containsMouse; ToolTip.text: "Show Desktop"
+                    ToolTip.visible: containsMouse
+                    ToolTip.text: "Show Desktop"
+                    ToolTip.delay: 1000
                 }
             }
         }

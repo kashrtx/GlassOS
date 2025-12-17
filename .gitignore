@@ -38,3 +38,6 @@ dist/
 config.local.json
 /Storage/User/Documents
 /Storage/User/Downloads
+/Storage/User/Recycle Bin
+/Storage/User/Videos
+

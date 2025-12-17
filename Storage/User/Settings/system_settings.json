@@ -1,0 +1,76 @@
+{
+  "wallpaper": "s:/gemma 3 model/Sora Prompter/GlassOS/Storage/User/Pictures/Wallpapers/ian-dooley-DuBNA1QMpPA-unsplash.jpg",
+  "volume": 81,
+  "desktop_icons": [
+    {
+      "app": "AeroBrowser",
+      "icon": "\ud83c\udf10",
+      "name": "AeroBrowser",
+      "x": 16,
+      "y": 16
+    },
+    {
+      "app": "Calculator",
+      "icon": "\ud83e\uddee",
+      "name": "Calculator",
+      "x": 16,
+      "y": 104
+    },
+    {
+      "app": "AeroExplorer",
+      "icon": "\ud83d\udcbb",
+      "name": "Computer",
+      "x": 16,
+      "y": 192
+    },
+    {
+      "app": "AeroExplorer",
+      "icon": "\ud83d\udcc4",
+      "name": "Documents",
+      "x": 16,
+      "y": 280
+    },
+    {
+      "app": "GlassPad",
+      "icon": "\ud83d\udcdd",
+      "name": "GlassPad",
+      "x": 16,
+      "y": 368
+    },
+    {
+      "app": "GlassPad",
+      "icon": "\ud83d\udcc4",
+      "name": "New File.txt",
+      "x": 180.0,
+      "y": 460.0
+    },
+    {
+      "app": "RecycleBin",
+      "icon": "\ud83d\uddd1",
+      "name": "Recycle Bin",
+      "x": 20.0,
+      "y": 540.0
+    },
+    {
+      "app": "GlassPad",
+      "icon": "\ud83d\udcc4",
+      "name": "New File (1).txt",
+      "x": 200.0,
+      "y": 560.0
+    },
+    {
+      "app": "GlassPad",
+      "icon": "\ud83d\udcc4",
+      "name": "New File (2).txt",
+      "x": 440.0,
+      "y": 260.0
+    },
+    {
+      "app": "GlassPad",
+      "icon": "\ud83d\udcc4",
+      "name": "New File (3).txt",
+      "x": 616,
+      "y": 528
+    }
+  ]
+}

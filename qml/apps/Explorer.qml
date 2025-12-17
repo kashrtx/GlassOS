@@ -8,8 +8,11 @@ Rectangle {
     color: "transparent"
     
     property string currentPath: "/"
+    property string initialPath: "/"
     property var files: []
     property var selectedFile: null
+    
+    onInitialPathChanged: loadFolder(initialPath)
     
     signal openFileRequest(string path, string name, bool isImage, bool isText)
     signal setAsWallpaper(string path)
@@ -21,7 +24,8 @@ Rectangle {
         { name: "Downloads", path: "/Downloads", icon: "⬇" },
         { name: "Pictures", path: "/Pictures", icon: "🖼" },
         { name: "Videos", path: "/Videos", icon: "🎬" },
-        { name: "Apps", path: "/Apps", icon: "📦" }
+        { name: "Apps", path: "/Apps", icon: "📦" },
+        { name: "Recycle Bin", path: "/Recycle Bin", icon: "🗑" }
     ]
     
     Component.onCompleted: loadFolder(currentPath)
@@ -213,9 +217,17 @@ Rectangle {
         
         StyledMenuItem {
             width: parent.width - 12
-            text: "Open"
-            icon: "📂"
-            onClicked: { openFile(selectedFile); fileContextMenu.hide() }
+            text: currentPath === "/Recycle Bin" ? "Restore" : "Open"
+            icon: currentPath === "/Recycle Bin" ? "♻" : "📂"
+            onClicked: { 
+                if (currentPath === "/Recycle Bin") {
+                    Storage.restoreFromTrash(selectedFile.trashName)
+                    loadFolder(currentPath)
+                } else {
+                    openFile(selectedFile)
+                }
+                fileContextMenu.hide() 
+            }
         }
         
         StyledMenuItem {
@@ -260,14 +272,22 @@ Rectangle {
             width: parent.width - 12
             text: "Cut"
             icon: "✂"
-            onClicked: { fileContextMenu.hide() }
+            enabled: currentPath !== "/Recycle Bin" && selectedFile !== null
+            onClicked: { 
+                Storage.setClipboard(selectedFile.path, "cut")
+                fileContextMenu.hide() 
+            }
         }
         
         StyledMenuItem {
             width: parent.width - 12
             text: "Copy"
             icon: "📋"
-            onClicked: { fileContextMenu.hide() }
+            enabled: currentPath !== "/Recycle Bin" && selectedFile !== null
+            onClicked: { 
+                Storage.setClipboard(selectedFile.path, "copy")
+                fileContextMenu.hide() 
+            }
         }
         
         StyledMenuItem {
@@ -287,7 +307,7 @@ Rectangle {
         
         StyledMenuItem {
             width: parent.width - 12
-            text: "Delete"
+            text: currentPath === "/Recycle Bin" ? "Delete Permanently" : "Delete"
             icon: "🗑"
             onClicked: { 
                 fileContextMenu.hide()
@@ -327,11 +347,34 @@ Rectangle {
             width: parent.width - 12
             text: "Paste"
             icon: "📋"
-            enabled: false
-            onClicked: { bgContextMenu.hide() }
+            enabled: currentPath !== "/Recycle Bin" && Storage.clipboardPath !== ""
+            onClicked: { 
+                bgContextMenu.hide()
+                if (Storage.paste(currentPath)) {
+                    loadFolder(currentPath)
+                }
+            }
         }
     }
     
+    // Keyboard shortcuts
+    Item {
+        focus: true
+        Keys.onPressed: function(event) {
+            if (event.modifiers & Qt.ControlModifier) {
+                if (event.key === Qt.Key_C && selectedFile) {
+                    Storage.setClipboard(selectedFile.path, "copy")
+                } else if (event.key === Qt.Key_X && selectedFile) {
+                    Storage.setClipboard(selectedFile.path, "cut")
+                } else if (event.key === Qt.Key_V && currentPath !== "/Recycle Bin") {
+                    if (Storage.paste(currentPath)) loadFolder(currentPath)
+                } else if (event.key === Qt.Key_R) {
+                    loadFolder(currentPath)
+                }
+            }
+        }
+    }
+
     RowLayout {
         anchors.fill: parent
         spacing: 0
@@ -497,12 +540,41 @@ Rectangle {
                             anchors.leftMargin: 8
                             spacing: 6
                             
-                            Text { anchors.verticalCenter: parent.verticalCenter; text: "📁"; font.pixelSize: 12 }
+                            Text { anchors.verticalCenter: parent.verticalCenter; text: currentPath === "/Recycle Bin" ? "🗑" : "📁"; font.pixelSize: 12 }
                             Text { 
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: currentPath === "/" ? "Storage" : "Storage" + currentPath
                                 font.pixelSize: 11
                                 color: "#ffffff"
+                            }
+                        }
+                    }
+                    
+                    // Empty Recycle Bin
+                    Rectangle {
+                        visible: currentPath === "/Recycle Bin"
+                        width: 120
+                        height: 26
+                        anchors.verticalCenter: parent.verticalCenter
+                        radius: 4
+                        color: emptyTrashMouse.containsMouse ? "#cc3333" : "transparent"
+                        border.width: 1
+                        border.color: Qt.rgba(1, 1, 1, 0.2)
+                        
+                        Row {
+                            anchors.centerIn: parent
+                            spacing: 4
+                            Text { text: "🧹"; font.pixelSize: 12 }
+                            Text { text: "Empty Recycle Bin"; font.pixelSize: 10; color: "#fff" }
+                        }
+                        
+                        MouseArea {
+                            id: emptyTrashMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            onClicked: {
+                                Storage.emptyTrash()
+                                loadFolder(currentPath)
                             }
                         }
                     }
@@ -527,6 +599,28 @@ Rectangle {
                     }
                 }
                 
+                DropArea {
+                    anchors.fill: parent
+                    onDropped: function(drop) {
+                        if (drop.hasFormat("path")) {
+                            var sourcePath = drop.getDataAsString("path")
+                            var targetDir = currentPath
+                            
+                            // If dropping INTO Recycle Bin, treat as delete
+                            if (targetDir === "/Recycle Bin") {
+                                if (Storage.moveToTrash(sourcePath)) {
+                                    loadFolder(currentPath)
+                                }
+                            } else {
+                                // Otherwise move to the folder
+                                if (Storage.moveItem(sourcePath, targetDir)) {
+                                    loadFolder(currentPath)
+                                }
+                            }
+                        }
+                    }
+                }
+                
                 GridView {
                     id: fileGrid
                     anchors.fill: parent
@@ -545,9 +639,42 @@ Rectangle {
                         border.width: selectedFile === modelData ? 1 : 0
                         border.color: "#4a9eff"
                         
+                        // Drag Support
+                        Drag.active: fileMouse.drag.active
+                        Drag.hotSpot.x: width / 2
+                        Drag.hotSpot.y: height / 2
+                        Drag.mimeData: { "path": modelData.path, "name": modelData.name, "isDir": modelData.isDirectory }
+                        
+                        // DropArea only for folders
+                        DropArea {
+                            id: folderDropArea
+                            anchors.fill: parent
+                            enabled: modelData.isDirectory
+                            
+                            onEntered: function(drag) {
+                                if (drag.source !== parent) {
+                                    parent.border.width = 2
+                                    parent.border.color = "#4a9eff"
+                                }
+                            }
+                            onExited: {
+                                parent.border.width = (selectedFile === modelData) ? 1 : 0
+                                parent.border.color = "#4a9eff"
+                            }
+                            onDropped: function(drop) {
+                                var sourcePath = drop.getDataAsString("path")
+                                if (sourcePath !== modelData.path) {
+                                    if (Storage.moveItem(sourcePath, modelData.path)) {
+                                        loadFolder(currentPath)
+                                    }
+                                }
+                            }
+                        }
+                        
                         Column {
                             anchors.centerIn: parent
                             spacing: 4
+                            opacity: Storage.clipboardPath === modelData.path && Storage.clipboardOp === "cut" ? 0.4 : 1.0
                             
                             Item {
                                 anchors.horizontalCenter: parent.horizontalCenter
@@ -587,12 +714,20 @@ Rectangle {
                             anchors.fill: parent
                             hoverEnabled: true
                             acceptedButtons: Qt.LeftButton | Qt.RightButton
+                            drag.target: parent // Enable dragging
+                            drag.threshold: 10
                             
                             onClicked: function(mouse) {
                                 selectedFile = modelData
                                 bgContextMenu.hide()
                                 if (mouse.button === Qt.RightButton) {
                                     fileContextMenu.show(mouse.x + parent.x + 130, mouse.y + parent.y + 36)
+                                }
+                            }
+                            
+                            onReleased: {
+                                if (Drag.active) {
+                                    // Handle drop is done by DropArea
                                 }
                             }
                             
@@ -766,36 +901,46 @@ Rectangle {
                 
                 Text { text: "This cannot be undone."; font.pixelSize: 11; color: "#888" }
                 
-                Row {
-                    anchors.right: parent.right
-                    spacing: 8
-                    
-                    Rectangle {
-                        width: 70; height: 28; radius: 4
-                        color: cancelDelMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.15) : Qt.rgba(1, 1, 1, 0.08)
-                        Text { anchors.centerIn: parent; text: "Cancel"; font.pixelSize: 11; color: "#fff" }
-                        MouseArea { id: cancelDelMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: deleteDialog.visible = false }
-                    }
-                    
-                    Rectangle {
-                        width: 70; height: 28; radius: 4
-                        color: confirmDelMouse.containsMouse ? "#c04040" : "#e04343"
-                        Text { anchors.centerIn: parent; text: "Delete"; font.pixelSize: 11; color: "#fff" }
-                        MouseArea { 
-                            id: confirmDelMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                if (selectedFile) {
-                                    Storage.deleteItem(selectedFile.path)
-                                    deleteDialog.visible = false
-                                    loadFolder(currentPath)
+                        Row {
+                            anchors.right: parent.right
+                            spacing: 8
+                            
+                            Rectangle {
+                                width: 70; height: 28; radius: 4
+                                color: cancelDelMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.15) : Qt.rgba(1, 1, 1, 0.08)
+                                Text { anchors.centerIn: parent; text: "Cancel"; font.pixelSize: 11; color: "#fff" }
+                                MouseArea { id: cancelDelMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: deleteDialog.visible = false }
+                            }
+                            
+                            Rectangle {
+                                width: 70; height: 28; radius: 4
+                                color: confirmDelMouse.containsMouse ? "#c04040" : "#e04343"
+                                Text { 
+                                    anchors.centerIn: parent
+                                    text: currentPath === "/Recycle Bin" ? "Delete Forever" : "Delete"
+                                    font.pixelSize: 11; color: "#fff" 
+                                }
+                                MouseArea { 
+                                    id: confirmDelMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        if (selectedFile) {
+                                            if (currentPath === "/Recycle Bin") {
+                                                // Real delete from disk
+                                                Storage.deleteItem(selectedFile.path)
+                                            } else {
+                                                // Move to trash
+                                                Storage.moveToTrash(selectedFile.path)
+                                            }
+                                            deleteDialog.visible = false
+                                            loadFolder(currentPath)
+                                        }
+                                    }
                                 }
                             }
                         }
-                    }
-                }
             }
         }
     }
