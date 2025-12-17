@@ -512,35 +512,8 @@ ApplicationWindow {
     Component {
         id: browserComponent
         GlassWindow {
-            Rectangle {
-                anchors.fill: parent
-                color: "transparent"
-                
-                Column {
-                    anchors.centerIn: parent
-                    spacing: 16
-                    
-                    Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        text: "🌐"
-                        font.pixelSize: 64
-                    }
-                    
-                    Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        text: "AeroBrowser"
-                        font.pixelSize: 24
-                        font.family: "Segoe UI"
-                        color: "#ffffff"
-                    }
-                    
-                    Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        text: "Web browsing coming soon!"
-                        font.pixelSize: 14
-                        color: "#888888"
-                    }
-                }
+            Browser { 
+                anchors.fill: parent 
             }
         }
     }

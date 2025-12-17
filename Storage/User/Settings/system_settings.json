@@ -38,39 +38,25 @@
       "y": 368
     },
     {
-      "app": "GlassPad",
-      "icon": "\ud83d\udcc4",
-      "name": "New File.txt",
-      "x": 180.0,
-      "y": 460.0
-    },
-    {
       "app": "RecycleBin",
       "icon": "\ud83d\uddd1",
       "name": "Recycle Bin",
-      "x": 20.0,
-      "y": 540.0
+      "x": 16,
+      "y": 456
     },
     {
       "app": "GlassPad",
       "icon": "\ud83d\udcc4",
-      "name": "New File (1).txt",
-      "x": 200.0,
-      "y": 560.0
+      "name": "New File.txt",
+      "x": 16,
+      "y": 16
     },
     {
       "app": "GlassPad",
       "icon": "\ud83d\udcc4",
-      "name": "New File (2).txt",
-      "x": 440.0,
-      "y": 260.0
-    },
-    {
-      "app": "GlassPad",
-      "icon": "\ud83d\udcc4",
-      "name": "New File (3).txt",
-      "x": 616,
-      "y": 528
+      "name": "New File.txt",
+      "x": 528,
+      "y": 616
     }
   ]
 }

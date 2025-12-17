@@ -833,6 +833,19 @@ class DesktopEnvironment(QObject):
         # Install Sentinel (global exception handler)
         self.sentinel = GlassSentinel.install()
         
+        # Initialize AdBlocker for web browsing
+        try:
+            from .adblocker import AdBlockerProvider
+            from PySide6.QtWebEngineCore import QWebEngineProfile
+            
+            self.adblocker = AdBlockerProvider(self)
+            # Install on default profile
+            default_profile = QWebEngineProfile.defaultProfile()
+            self.adblocker.install_on_profile(default_profile)
+        except ImportError as e:
+            print(f"⚠️ AdBlocker not available: {e}")
+            self.adblocker = None
+        
         # Only auto-set wallpaper if no saved wallpaper exists
         if not self.storage_provider.currentWallpaper:
             wallpapers = self.storage_provider.getWallpapers()
@@ -865,6 +878,10 @@ class DesktopEnvironment(QObject):
         context.setContextProperty("AppRegistry", self.app_registry)
         context.setContextProperty("Sentinel", self.sentinel)
         context.setContextProperty("ResourceMonitor", self.resource_monitor)
+        
+        # Browser services
+        if self.adblocker:
+            context.setContextProperty("AdBlocker", self.adblocker)
         
         # Add import paths
         qml_path = Path(__file__).parent.parent / "qml"

@@ -29,6 +29,15 @@ from PySide6.QtCore import Qt, QCoreApplication
 from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtQml import QQmlApplicationEngine
 
+# Initialize WebEngine BEFORE QApplication is created (required by Chromium)
+try:
+    from PySide6.QtWebEngineQuick import QtWebEngineQuick
+    QtWebEngineQuick.initialize()
+    print("🌐 QtWebEngineQuick initialized successfully")
+except ImportError as e:
+    print(f"⚠️ QtWebEngineQuick not available: {e}")
+    print("   Browser functionality will be limited")
+
 from core.desktop_environment import DesktopEnvironment
 from core.vfs import VirtualFileSystem
 from core.config import Config
