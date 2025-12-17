@@ -1,0 +1,6 @@
+module apps
+Calculator 1.0 Calculator.qml
+Notepad 1.0 Notepad.qml
+Browser 1.0 Browser.qml
+Explorer 1.0 Explorer.qml
+Weather 1.0 Weather.qml

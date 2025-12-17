@@ -1,0 +1,174 @@
+{
+  "nodes": {
+    "/": {
+      "name": "root",
+      "path": "/",
+      "file_type": "directory",
+      "size": 0,
+      "created": "2025-12-17T11:09:59.167834",
+      "modified": "2025-12-17T11:09:59.167834",
+      "content": null,
+      "children": [
+        "/Desktop",
+        "/Documents",
+        "/Downloads",
+        "/Pictures",
+        "/Music",
+        "/Videos",
+        "/Applications"
+      ],
+      "metadata": {}
+    },
+    "/Desktop": {
+      "name": "Desktop",
+      "path": "/Desktop",
+      "file_type": "directory",
+      "size": 0,
+      "created": "2025-12-17T11:09:59.167884",
+      "modified": "2025-12-17T11:09:59.167884",
+      "content": null,
+      "children": [
+        "/Desktop/New Folder"
+      ],
+      "metadata": {}
+    },
+    "/Documents": {
+      "name": "Documents",
+      "path": "/Documents",
+      "file_type": "directory",
+      "size": 0,
+      "created": "2025-12-17T11:09:59.168229",
+      "modified": "2025-12-17T11:09:59.168229",
+      "content": null,
+      "children": [
+        "/Documents/Notes"
+      ],
+      "metadata": {}
+    },
+    "/Documents/Notes": {
+      "name": "Notes",
+      "path": "/Documents/Notes",
+      "file_type": "directory",
+      "size": 0,
+      "created": "2025-12-17T11:09:59.168566",
+      "modified": "2025-12-17T11:09:59.168566",
+      "content": null,
+      "children": [
+        "/Documents/Notes/Welcome.md"
+      ],
+      "metadata": {}
+    },
+    "/Downloads": {
+      "name": "Downloads",
+      "path": "/Downloads",
+      "file_type": "directory",
+      "size": 0,
+      "created": "2025-12-17T11:09:59.168913",
+      "modified": "2025-12-17T11:09:59.168913",
+      "content": null,
+      "children": [],
+      "metadata": {}
+    },
+    "/Pictures": {
+      "name": "Pictures",
+      "path": "/Pictures",
+      "file_type": "directory",
+      "size": 0,
+      "created": "2025-12-17T11:09:59.169341",
+      "modified": "2025-12-17T11:09:59.169341",
+      "content": null,
+      "children": [],
+      "metadata": {}
+    },
+    "/Music": {
+      "name": "Music",
+      "path": "/Music",
+      "file_type": "directory",
+      "size": 0,
+      "created": "2025-12-17T11:09:59.169700",
+      "modified": "2025-12-17T11:09:59.169700",
+      "content": null,
+      "children": [],
+      "metadata": {}
+    },
+    "/Videos": {
+      "name": "Videos",
+      "path": "/Videos",
+      "file_type": "directory",
+      "size": 0,
+      "created": "2025-12-17T11:09:59.170171",
+      "modified": "2025-12-17T11:09:59.170171",
+      "content": null,
+      "children": [],
+      "metadata": {}
+    },
+    "/Applications": {
+      "name": "Applications",
+      "path": "/Applications",
+      "file_type": "directory",
+      "size": 0,
+      "created": "2025-12-17T11:09:59.170566",
+      "modified": "2025-12-17T11:09:59.170566",
+      "content": null,
+      "children": [],
+      "metadata": {}
+    },
+    "/Documents/Notes/Welcome.md": {
+      "name": "Welcome.md",
+      "path": "/Documents/Notes/Welcome.md",
+      "file_type": "file",
+      "size": 785,
+      "created": "2025-12-17T11:09:59.170968",
+      "modified": "2025-12-17T11:09:59.170968",
+      "content": "# Welcome to GlassOS! \ud83c\udf1f\n\nThank you for using GlassOS - your beautiful glass-themed desktop environment.\n\n## Getting Started\n\n- **Desktop**: Your main workspace with shortcuts\n- **Taskbar**: Quick access to running apps and system status\n- **Applications**: Launch built-in apps from the start menu\n\n## Built-in Applications\n\n1. **AeroBrowser** - Browse the web with style\n2. **GlassPad** - Create beautiful notes and documents\n3. **Weather** - Check the weather with a stunning UI\n4. **Calculator** - Quick calculations with glass aesthetics\n5. **AeroExplorer** - Manage your files efficiently\n\n## Tips\n\n- Drag windows to screen edges to snap them\n- Use the taskbar clock for quick time checks\n- Right-click the desktop for context menu options\n\nEnjoy your GlassOS experience! \ud83d\udc8e\n",
+      "children": [],
+      "metadata": {}
+    },
+    "/Desktop/New Folder": {
+      "name": "New Folder",
+      "path": "/Desktop/New Folder",
+      "file_type": "directory",
+      "size": 0,
+      "created": "2025-12-17T11:31:04.807257",
+      "modified": "2025-12-17T11:31:04.807257",
+      "content": null,
+      "children": [],
+      "metadata": {}
+    }
+  },
+  "search_index": {
+    "desktop": [
+      "/Desktop"
+    ],
+    "documents": [
+      "/Documents"
+    ],
+    "notes": [
+      "/Documents/Notes"
+    ],
+    "downloads": [
+      "/Downloads"
+    ],
+    "pictures": [
+      "/Pictures"
+    ],
+    "music": [
+      "/Music"
+    ],
+    "videos": [
+      "/Videos"
+    ],
+    "applications": [
+      "/Applications"
+    ],
+    "welcome.md": [
+      "/Documents/Notes/Welcome.md"
+    ],
+    "new": [
+      "/Desktop/New Folder"
+    ],
+    "folder": [
+      "/Desktop/New Folder"
+    ]
+  }
+}

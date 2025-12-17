@@ -1,0 +1,38 @@
+# GlassOS - Byte-compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build outputs
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Mojo compiled files
+*.mojopkg
+
+# VFS data (optional - can be committed for default files)
+# vfs_data/.vfs_index.json
+
+# Logs
+*.log
+
+# Local config overrides
+config.local.json

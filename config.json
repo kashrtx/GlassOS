@@ -1,0 +1,37 @@
+{
+    "theme": {
+        "blur_radius": 40,
+        "blur_opacity": 0.75,
+        "glass_tint": "#1a1a2e",
+        "glass_tint_opacity": 0.6,
+        "accent_color": "#00b4d8",
+        "accent_glow": "#48cae4",
+        "highlight_color": "#90e0ef",
+        "window_border_color": "#4cc9f0",
+        "window_border_opacity": 0.8,
+        "window_shadow_color": "#000000",
+        "window_shadow_opacity": 0.5,
+        "text_primary": "#ffffff",
+        "text_secondary": "#b0b0b0",
+        "text_disabled": "#666666",
+        "taskbar_height": 48,
+        "taskbar_blur": 50,
+        "taskbar_tint": "#0a0a15",
+        "taskbar_opacity": 0.85
+    },
+    "system": {
+        "screen_width": 1920,
+        "screen_height": 1080,
+        "start_maximized": true,
+        "animation_duration": 250,
+        "animation_easing": "OutCubic",
+        "enable_animations": true,
+        "snap_threshold": 20,
+        "snap_enabled": true,
+        "enable_blur": true,
+        "blur_quality": "high",
+        "weather_api_key": "",
+        "weather_city": "New York",
+        "weather_units": "metric"
+    }
+}

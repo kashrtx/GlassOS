@@ -1,0 +1,10 @@
+module components
+GlassPanel 1.0 GlassPanel.qml
+GlassButton 1.0 GlassButton.qml
+GlassWindow 1.0 GlassWindow.qml
+Taskbar 1.0 Taskbar.qml
+TaskbarButton 1.0 TaskbarButton.qml
+StartMenu 1.0 StartMenu.qml
+DesktopArea 1.0 DesktopArea.qml
+DesktopIcon 1.0 DesktopIcon.qml
+ContextMenuItem 1.0 ContextMenuItem.qml
