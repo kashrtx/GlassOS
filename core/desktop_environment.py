@@ -406,11 +406,19 @@ class StorageProvider(QObject):
     def getDesktopIcons(self):
         """Get list of desktop icons, synced with actual filesystem."""
         
-        # 1. Define Standard System Icons (Always present unless user hid them, but for now we enforce)
-        system_apps = ["Computer", "Recycle Bin", "Documents", "Calculator", "AeroBrowser", "GlassPad"]
+        # 1. Define Standard System Icons (Always present)
+        system_icons = {
+            "Computer": {"name": "Computer", "icon": "💻", "app": "AeroExplorer", "x": 16, "y": 16},
+            "Documents": {"name": "Documents", "icon": "📄", "app": "AeroExplorer", "x": 16, "y": 104},
+            "AeroBrowser": {"name": "AeroBrowser", "icon": "🌐", "app": "AeroBrowser", "x": 16, "y": 192},
+            "GlassPad": {"name": "GlassPad", "icon": "📝", "app": "GlassPad", "x": 16, "y": 280},
+            "Calculator": {"name": "Calculator", "icon": "🧮", "app": "Calculator", "x": 16, "y": 368},
+            "Recycle Bin": {"name": "Recycle Bin", "icon": "🗑", "app": "RecycleBin", "x": 16, "y": 456},
+        }
+        system_icon_names = set(system_icons.keys())
         
         # 2. Get real files on Desktop
-        desktop_path = self._storage_root / "User" / "Desktop"
+        desktop_path = self._storage_root / "Desktop"
         real_files = set()
         if desktop_path.exists():
             for item in desktop_path.iterdir():
@@ -423,9 +431,9 @@ class StorageProvider(QObject):
         if self._desktop_icons:
             for icon in self._desktop_icons:
                 name = icon.get("name", "")
-                is_system = icon.get("app") in system_apps or name in system_apps
-                
-                # Keep if it's a system app OR if the file exists on disk
+                is_system = name in system_icon_names
+
+                # Keep if it's a system icon OR if the file exists on disk
                 if is_system or name in real_files:
                     current_icons.append(icon)
         
@@ -446,20 +454,19 @@ class StorageProvider(QObject):
                     "y": 16
                 })
         
+        # Add any missing system icons using defaults
+        system_additions = []
+        for name, icon_data in system_icons.items():
+            if name not in existing_names:
+                system_additions.append(icon_data)
+
         # Merge
-        final_icons = current_icons + new_icons
-        
+        final_icons = current_icons + system_additions + new_icons
+
         # If completely empty (first run), add defaults
         if not final_icons and not self._desktop_icons:
-             return [
-                { "name": "Computer", "icon": "💻", "app": "AeroExplorer", "x": 16, "y": 16 },
-                { "name": "Documents", "icon": "📄", "app": "AeroExplorer", "x": 16, "y": 104 },
-                { "name": "AeroBrowser", "icon": "🌐", "app": "AeroBrowser", "x": 16, "y": 192 },
-                { "name": "GlassPad", "icon": "📝", "app": "GlassPad", "x": 16, "y": 280 },
-                { "name": "Calculator", "icon": "🧮", "app": "Calculator", "x": 16, "y": 368 },
-                { "name": "Recycle Bin", "icon": "🗑", "app": "RecycleBin", "x": 16, "y": 456 }
-            ]
-            
+            final_icons = list(system_icons.values())
+
         self._desktop_icons = final_icons
         return self._desktop_icons
 
