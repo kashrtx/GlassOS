@@ -1,4 +1,4 @@
-// GlassOS Notepad (GlassPad) - Working Text Editor
+// GlassOS Notepad (GlassPad) - Full Text Editor
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -7,8 +7,41 @@ Rectangle {
     id: notepad
     color: "transparent"
     
+    // Bind to System Accessibility
+    property int baseFontSize: Accessibility.baseFontSize
+    property bool useBold: Accessibility.boldText
+    property int fontSize: baseFontSize // Validated default
+    
+    // Watch for system changes to reset/update
+    onBaseFontSizeChanged: fontSize = baseFontSize
+    
     property bool modified: false
     property string fileName: "Untitled"
+    property string filePath: ""
+    
+    function loadFile(path, name) {
+        filePath = path
+        fileName = name
+        var content = Storage.readFile(path)
+        textArea.text = content
+        modified = false
+    }
+    
+    function saveFile() {
+        if (filePath) {
+            Storage.writeFile(filePath, textArea.text)
+            modified = false
+        } else {
+            console.log("Save As not implemented in inline editor")
+        }
+    }
+    
+    function newFile() {
+        textArea.text = ""
+        fileName = "Untitled"
+        filePath = ""
+        modified = false
+    }
     
     ColumnLayout {
         anchors.fill: parent
@@ -18,154 +51,181 @@ Rectangle {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 36
-            color: Qt.rgba(0, 0, 0, 0.15)
+            color: Qt.rgba(0.1, 0.12, 0.15, 0.95)
             
             Row {
-                anchors.fill: parent
-                anchors.leftMargin: 8
-                spacing: 4
+                anchors.fill: parent; anchors.leftMargin: 8; spacing: 4
                 
-                ToolButton { icon: "📄"; tooltip: "New"; onClicked: { textArea.text = ""; modified = false; fileName = "Untitled" } }
-                ToolButton { icon: "📂"; tooltip: "Open"; onClicked: { /* TODO */ } }
-                ToolButton { icon: "💾"; tooltip: "Save"; onClicked: { modified = false } }
-                
+                ToolButton { icon: "📄"; tooltip: "New"; onBtnClicked: newFile() }
+                ToolButton { icon: "💾"; tooltip: "Save"; highlight: modified; onBtnClicked: saveFile() }
                 ToolSeparator {}
-                
-                ToolButton { icon: "✂"; tooltip: "Cut" }
-                ToolButton { icon: "📋"; tooltip: "Copy" }
-                ToolButton { icon: "📥"; tooltip: "Paste" }
-                
+                ToolButton { icon: "✂"; tooltip: "Cut"; onBtnClicked: textArea.cut() }
+                ToolButton { icon: "📋"; tooltip: "Copy"; onBtnClicked: textArea.copy() }
+                ToolButton { icon: "📥"; tooltip: "Paste"; onBtnClicked: textArea.paste() }
                 ToolSeparator {}
-                
-                ToolButton { icon: "↩"; tooltip: "Undo" }
-                ToolButton { icon: "↪"; tooltip: "Redo" }
-                
+                ToolButton { icon: "↩"; tooltip: "Undo"; onBtnClicked: textArea.undo() }
+                ToolButton { icon: "↪"; tooltip: "Redo"; onBtnClicked: textArea.redo() }
                 ToolSeparator {}
-                
                 ToolButton { 
-                    icon: "B"
-                    tooltip: "Bold"
-                    fontBold: true
+                    icon: "⏎"; tooltip: "Word Wrap"; 
+                    highlight: textArea.wrapMode === TextEdit.Wrap
+                    onBtnClicked: textArea.wrapMode = (textArea.wrapMode === TextEdit.Wrap ? TextEdit.NoWrap : TextEdit.Wrap)
                 }
-                ToolButton { 
-                    icon: "I"
-                    tooltip: "Italic"
-                    fontItalic: true
-                }
-                ToolButton { 
-                    icon: "U"
-                    tooltip: "Underline"
-                    fontUnderline: true
+                
+                Item { width: 10 }
+                
+                // Font Control
+                Row {
+                    anchors.verticalCenter: parent.verticalCenter; spacing: 4
+                    Text { anchors.verticalCenter: parent.verticalCenter; text: "A"; font.pixelSize: 12; color: "#aaa" }
+                    
+                    Rectangle {
+                        width: 24; height: 22; radius: 4
+                        color: minusMouse.containsMouse ? Qt.rgba(1,1,1,0.1) : "transparent"
+                        Text { anchors.centerIn: parent; text: "−"; color: "#fff" }
+                        MouseArea { id: minusMouse; anchors.fill: parent; onClicked: if(fontSize > 8) fontSize -= 2 }
+                    }
+                    
+                    Text { 
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: fontSize + "px"
+                        color: "#fff"; font.pixelSize: 11; width: 30
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+                    
+                    Rectangle {
+                        width: 24; height: 22; radius: 4
+                        color: plusMouse.containsMouse ? Qt.rgba(1,1,1,0.1) : "transparent"
+                        Text { anchors.centerIn: parent; text: "+"; color: "#fff" }
+                        MouseArea { id: plusMouse; anchors.fill: parent; onClicked: if(fontSize < 48) fontSize += 2 }
+                    }
                 }
             }
         }
         
-        // Text area
+        // Editor Area
         Rectangle {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
+            Layout.fillWidth: true; Layout.fillHeight: true
             color: Qt.rgba(0.05, 0.05, 0.08, 0.9)
             
-            ScrollView {
-                anchors.fill: parent
-                anchors.margins: 4
+            // Line Numbers
+            Rectangle {
+                id: gutters
+                width: 40; height: parent.height
+                color: Qt.rgba(0,0,0,0.2)
+                
+                Column {
+                    y: -textAreaFlick.contentY + textArea.topPadding
+                    width: parent.width
+                    Repeater {
+                        model: textArea.lineCount
+                        Text {
+                            width: 34; height: textArea.cursorRectangle.height
+                            x: 3
+                            text: index + 1
+                            font: textArea.font
+                            color: "#666"
+                            horizontalAlignment: Text.AlignRight
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                }
+            }
+            
+            Flickable {
+                id: textAreaFlick
+                anchors.left: gutters.right; anchors.right: parent.right
+                anchors.top: parent.top; anchors.bottom: parent.bottom
+                contentWidth: textArea.width; contentHeight: textArea.height
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
                 
                 TextArea {
                     id: textArea
-                    font.family: "Consolas"
-                    font.pixelSize: 14
+                    width: Math.max(textAreaFlick.width, implicitWidth)
+                    height: Math.max(textAreaFlick.height, implicitHeight)
+                    padding: 8
+                    
                     color: "#ffffff"
                     selectionColor: "#4a90d9"
                     selectedTextColor: "#ffffff"
-                    wrapMode: TextEdit.Wrap
                     
-                    background: Rectangle {
-                        color: "transparent"
-                    }
+                    font.family: "Consolas"
+                    font.pixelSize: fontSize
+                    font.bold: useBold
                     
-                    placeholderText: "Start typing..."
-                    placeholderTextColor: "#555555"
+                    wrapMode: TextEdit.NoWrap
                     
                     onTextChanged: modified = true
+                    
+                    Keys.onPressed: (event) => {
+                        if ((event.key === Qt.Key_S) && (event.modifiers & Qt.ControlModifier)) {
+                            saveFile(); event.accepted = true;
+                        }
+                        if ((event.key === Qt.Key_N) && (event.modifiers & Qt.ControlModifier)) {
+                            newFile(); event.accepted = true;
+                        }
+                    }
                 }
+                
+                ScrollBar.vertical: ScrollBar {}
+                ScrollBar.horizontal: ScrollBar {}
             }
         }
         
-        // Status bar
+        // Status Bar
         Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 22
-            color: Qt.rgba(0, 0, 0, 0.25)
-            
+            Layout.fillWidth: true; Layout.preferredHeight: 24
+            color: "#1e1e1e"
             Row {
-                anchors.fill: parent
-                anchors.leftMargin: 10
-                spacing: 20
-                
-                Text {
+                anchors.fill: parent; anchors.leftMargin: 8; anchors.rightMargin: 8; spacing: 12
+                Text { 
+                    text: (modified ? "*" : "") + (fileName || "Untitled")
+                    color: "#fff"; font.pixelSize: 11; font.bold: useBold
                     anchors.verticalCenter: parent.verticalCenter
-                    text: fileName + (modified ? " *" : "")
-                    font.pixelSize: 10
-                    color: "#888888"
                 }
-                
-                Text {
+                Rectangle { width: 1; height: 14; color: "#444"; anchors.verticalCenter: parent.verticalCenter }
+                Text { 
+                    text: textArea.length + " chars"
+                    color: "#aaa"; font.pixelSize: 11; font.bold: useBold
                     anchors.verticalCenter: parent.verticalCenter
-                    text: textArea.text.length + " characters"
-                    font.pixelSize: 10
-                    color: "#888888"
                 }
-                
-                Text {
+                Text { 
+                    text: textArea.lineCount + " lines"
+                    color: "#aaa"; font.pixelSize: 11; font.bold: useBold
                     anchors.verticalCenter: parent.verticalCenter
-                    text: textArea.text.split("\n").length + " lines"
-                    font.pixelSize: 10
-                    color: "#888888"
                 }
             }
         }
     }
     
+    // Components
     component ToolButton: Rectangle {
-        property string icon: ""
-        property string tooltip: ""
-        property bool fontBold: false
-        property bool fontItalic: false
-        property bool fontUnderline: false
-        signal clicked()
+        property string icon
+        property string tooltip
+        property bool highlight: false
+        signal btnClicked()
         
-        width: 28
-        height: 26
+        width: 30; height: 30
+        radius: 4
         anchors.verticalCenter: parent.verticalCenter
-        radius: 3
-        color: tbMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.15) : "transparent"
+        color: highlight ? Qt.rgba(0.3, 0.5, 0.8, 0.4) : (tbMouse.containsMouse ? Qt.rgba(1,1,1,0.1) : "transparent")
         
-        Text {
-            anchors.centerIn: parent
-            text: icon
-            font.pixelSize: 13
-            font.bold: fontBold
-            font.italic: fontItalic
-            font.underline: fontUnderline
-            color: "#ffffff"
-        }
+        Text { anchors.centerIn: parent; text: icon; font.pixelSize: 16 }
         
         MouseArea {
-            id: tbMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            onClicked: parent.clicked()
+            id: tbMouse; anchors.fill: parent; hoverEnabled: true
+            onClicked: btnClicked()
         }
-        
         ToolTip.visible: tbMouse.containsMouse
         ToolTip.text: tooltip
         ToolTip.delay: 500
     }
     
     component ToolSeparator: Rectangle {
-        width: 1
-        height: 20
+        width: 1; height: 20
+        color: "#444"
         anchors.verticalCenter: parent.verticalCenter
-        color: Qt.rgba(1, 1, 1, 0.2)
+        anchors.margins: 2
     }
 }

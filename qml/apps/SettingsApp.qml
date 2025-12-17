@@ -1,4 +1,4 @@
-// GlassOS Settings App - Improved with Full Functionality
+// GlassOS Settings App - Fixed and Stable
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -7,34 +7,71 @@ Rectangle {
     id: settingsApp
     color: "transparent"
     
+    // Bind to Storage updates
+    Connections {
+        target: Storage
+        function onWallpaperChanged() { refreshWallpapers() }
+    }
+    
     signal wallpaperSelected(string path)
     
     property int currentSection: 0
     property var wallpapers: []
+    property string currentWallpaperUrl: Storage.getWallpaperUrl()
+    property string currentWallpaperPath: Storage.currentWallpaper // Bind directly
+    property var systemInfo: ({})
+    
+    // Safe font sizes
+    property var fontSizes: [10, 12, 14, 16] // Small, Normal, Large, XLarge
+    property int currentFontSize: Accessibility.baseFontSize
+    property bool isBold: Accessibility.boldText // Bind to Accessibility
     
     property var sections: [
         { name: "Personalization", icon: "🎨" },
         { name: "Display", icon: "🖥" },
-        { name: "System", icon: "⚙" },
-        { name: "Storage", icon: "💾" },
+        { name: "System", icon: "💻" },
         { name: "About", icon: "ℹ" }
     ]
     
     Component.onCompleted: {
+        refreshAll()
+    }
+    
+    function refreshAll() {
         refreshWallpapers()
+        loadSystemInfo()
     }
     
     function refreshWallpapers() {
-        wallpapers = Storage.getWallpapers()
+        var wpList = Storage.getWallpapers()
+        wallpapers = wpList
+        currentWallpaperUrl = Storage.getWallpaperUrl()
+        // currentWallpaperPath updates automatically via binding
+        console.log("Settings: Loaded", wpList.length, "wallpapers")
+    }
+    
+    function loadSystemInfo() {
+        try {
+            var infoStr = Storage.getSystemInfo()
+            systemInfo = JSON.parse(infoStr)
+        } catch (e) {
+            systemInfo = {}
+        }
     }
     
     function getCurrentWallpaperName() {
-        var url = Storage.getWallpaperUrl()
-        if (url) {
-            var parts = url.split("/")
+        if (currentWallpaperPath) {
+            var parts = currentWallpaperPath.replace(/\\/g, "/").split("/")
             return parts[parts.length - 1]
         }
-        return "None"
+        return "None selected"
+    }
+    
+    function isCurrentWallpaper(wpPath) {
+        if (!currentWallpaperPath || !wpPath) return false
+        var current = currentWallpaperPath.replace(/\\/g, "/").toLowerCase()
+        var compare = wpPath.replace(/\\/g, "/").toLowerCase()
+        return current.indexOf(compare) !== -1 || compare.indexOf(current) !== -1
     }
     
     RowLayout {
@@ -43,85 +80,57 @@ Rectangle {
         
         // Sidebar
         Rectangle {
-            Layout.preferredWidth: 180
+            Layout.preferredWidth: 150
             Layout.fillHeight: true
-            color: Qt.rgba(0, 0, 0, 0.25)
+            color: Qt.rgba(0, 0, 0, 0.3)
             
-            Column {
+            ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 12
+                anchors.margins: 10
                 spacing: 4
                 
-                // Header
                 Row {
-                    spacing: 8
-                    bottomPadding: 16
-                    
-                    Text {
-                        text: "⚙"
-                        font.pixelSize: 24
-                    }
-                    
-                    Text {
+                    spacing: 6
+                    Layout.bottomMargin: 10
+                    Text { text: "⚙"; font.pixelSize: 20 }
+                    Text { 
                         text: "Settings"
-                        font.pixelSize: 18
+                        font.pixelSize: 16
                         font.bold: true
                         color: "#ffffff"
-                        anchors.verticalCenter: parent.verticalCenter
                     }
                 }
                 
                 Repeater {
                     model: sections
-                    
                     Rectangle {
-                        width: parent.width
-                        height: 40
-                        radius: 6
+                        Layout.fillWidth: true
+                        height: 32
+                        radius: 4
                         color: currentSection === index ? Qt.rgba(0.3, 0.5, 0.8, 0.5) : 
                                (sectionMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.1) : "transparent")
                         
-                        border.width: currentSection === index ? 1 : 0
-                        border.color: Qt.rgba(0.4, 0.6, 0.9, 0.5)
-                        
                         Row {
-                            anchors.fill: parent
-                            anchors.leftMargin: 12
-                            spacing: 12
-                            
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: modelData.icon
-                                font.pixelSize: 18
-                            }
-                            
-                            Text {
+                            anchors.fill: parent; anchors.leftMargin: 8; spacing: 8
+                            Text { anchors.verticalCenter: parent.verticalCenter; text: modelData.icon; font.pixelSize: 14 }
+                            Text { 
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: modelData.name
-                                font.pixelSize: 13
+                                font.pixelSize: currentFontSize
+                                font.bold: isBold
                                 color: "#ffffff"
                             }
                         }
-                        
                         MouseArea {
                             id: sectionMouse
                             anchors.fill: parent
                             hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
                             onClicked: currentSection = index
                         }
-                        
-                        Behavior on color { ColorAnimation { duration: 100 } }
                     }
                 }
+                Item { Layout.fillHeight: true }
             }
-        }
-        
-        // Separator
-        Rectangle {
-            Layout.preferredWidth: 1
-            Layout.fillHeight: true
-            color: Qt.rgba(1, 1, 1, 0.1)
         }
         
         // Content
@@ -132,577 +141,251 @@ Rectangle {
             
             StackLayout {
                 anchors.fill: parent
-                anchors.margins: 20
+                anchors.margins: 14
                 currentIndex: currentSection
                 
                 // ===== PERSONALIZATION =====
                 ScrollView {
+                    contentWidth: -1 // Disabled horizontal
                     clip: true
                     
-                    ColumnLayout {
+                    Column {
                         width: parent.width
-                        spacing: 20
+                        spacing: 14
                         
-                        // Section header
-                        Column {
-                            spacing: 4
-                            
-                            Text {
-                                text: "🎨 Personalization"
-                                font.pixelSize: 22
-                                font.bold: true
-                                color: "#ffffff"
-                            }
-                            
-                            Text {
-                                text: "Customize your desktop appearance"
-                                font.pixelSize: 12
-                                color: "#888888"
-                            }
-                        }
+                        Text { text: "🎨 Personalization"; font.pixelSize: 18; font.bold: true; color: "#ffffff" }
                         
-                        // Current wallpaper
+                        // Current Wallpaper Preview
                         Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 120
-                            radius: 8
-                            color: Qt.rgba(0, 0, 0, 0.2)
-                            border.width: 1
-                            border.color: Qt.rgba(1, 1, 1, 0.1)
+                            width: parent.width
+                            height: 90
+                            radius: 6
+                            color: Qt.rgba(0,0,0,0.25)
                             
                             Row {
-                                anchors.fill: parent
-                                anchors.margins: 12
-                                spacing: 16
-                                
-                                // Preview
+                                anchors.fill: parent; anchors.margins: 10; spacing: 12
                                 Rectangle {
-                                    width: 160
-                                    height: 96
-                                    radius: 6
-                                    color: Qt.rgba(0, 0, 0, 0.3)
-                                    
+                                    width: 120; height: 70; radius: 4; color: Qt.rgba(0,0,0,0.4)
                                     Image {
-                                        anchors.fill: parent
-                                        anchors.margins: 2
-                                        source: Storage.getWallpaperUrl()
+                                        anchors.fill: parent; anchors.margins: 2
+                                        source: currentWallpaperUrl
                                         fillMode: Image.PreserveAspectCrop
-                                        
-                                        Rectangle {
-                                            anchors.fill: parent
-                                            color: "transparent"
-                                            radius: 4
-                                        }
-                                    }
-                                    
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: "No wallpaper"
-                                        font.pixelSize: 10
-                                        color: "#666666"
-                                        visible: Storage.getWallpaperUrl() === ""
+                                        asynchronous: true
+                                        Text { anchors.centerIn: parent; text: "🖼"; visible: parent.status !== Image.Ready; opacity: 0.4; font.pixelSize: 24 }
                                     }
                                 }
-                                
                                 Column {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    spacing: 8
-                                    
-                                    Text {
-                                        text: "Current Wallpaper"
-                                        font.pixelSize: 14
-                                        font.bold: true
-                                        color: "#ffffff"
-                                    }
-                                    
-                                    Text {
+                                    anchors.verticalCenter: parent.verticalCenter; spacing: 6
+                                    Text { text: "Current Wallpaper"; font.pixelSize: currentFontSize+1; font.bold: true; color: "#fff" }
+                                    Text { 
                                         text: getCurrentWallpaperName()
-                                        font.pixelSize: 12
-                                        color: "#aaaaaa"
+                                        font.pixelSize: currentFontSize-1
+                                        font.bold: isBold
+                                        color: "#aaa"; width: 220; elide: Text.ElideMiddle
                                     }
-                                    
-                                    Rectangle {
-                                        width: 100
-                                        height: 28
-                                        radius: 4
-                                        color: refreshBtnMouse.containsMouse ? Qt.rgba(1,1,1,0.15) : Qt.rgba(1,1,1,0.08)
-                                        
-                                        Text {
-                                            anchors.centerIn: parent
-                                            text: "🔄 Refresh"
-                                            font.pixelSize: 11
-                                            color: "#ffffff"
-                                        }
-                                        
-                                        MouseArea {
-                                            id: refreshBtnMouse
-                                            anchors.fill: parent
-                                            hoverEnabled: true
-                                            onClicked: refreshWallpapers()
-                                        }
+                                    // Manual Refresh button
+                                    Button {
+                                        text: "Refresh"
+                                        onClicked: refreshWallpapers()
+                                        height: 24
+                                        font.pixelSize: 10
                                     }
                                 }
                             }
                         }
                         
-                        // Wallpaper selection label
-                        Row {
-                            spacing: 12
-                            
-                            Text {
-                                text: "Choose a wallpaper"
-                                font.pixelSize: 14
-                                font.bold: true
-                                color: "#aaaaaa"
-                            }
-                            
-                            Text {
-                                text: "(" + wallpapers.length + " available)"
-                                font.pixelSize: 12
-                                color: "#666666"
-                            }
+                        Text { 
+                            text: "Choose wallpaper (" + wallpapers.length + " found)"
+                            font.pixelSize: currentFontSize; font.bold: isBold; color: "#aaa"
                         }
                         
-                        // Wallpaper grid
+                        // Wallpaper Grid
                         Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: Math.max(180, Math.ceil(wallpapers.length / 4) * 90 + 20)
-                            radius: 8
-                            color: Qt.rgba(0, 0, 0, 0.2)
-                            border.width: 1
-                            border.color: Qt.rgba(1, 1, 1, 0.1)
+                            width: parent.width
+                            height: Math.max(180, Math.ceil(wallpapers.length / 4) * 85)
+                            radius: 6
+                            color: Qt.rgba(0,0,0,0.2)
                             
                             GridView {
-                                id: wallpaperGrid
-                                anchors.fill: parent
-                                anchors.margins: 10
-                                cellWidth: 130
-                                cellHeight: 85
+                                id: wpGrid
+                                anchors.fill: parent; anchors.margins: 8
+                                cellWidth: 110; cellHeight: 80
                                 clip: true
                                 model: wallpapers
-                                
                                 delegate: Rectangle {
-                                    width: 122
-                                    height: 77
-                                    radius: 6
-                                    color: wpMouse.containsMouse ? Qt.rgba(0.3, 0.5, 0.8, 0.4) : Qt.rgba(1, 1, 1, 0.05)
-                                    border.width: Storage.getWallpaperUrl().indexOf(modelData.name) !== -1 ? 2 : 0
+                                    width: wpGrid.cellWidth-6; height: wpGrid.cellHeight-6; radius: 4
+                                    color: mMouse.containsMouse ? Qt.rgba(1,1,1,0.1) : "transparent"
+                                    border.width: isCurrentWallpaper(modelData.path) ? 2 : 0
                                     border.color: "#4a9eff"
                                     
                                     Image {
-                                        anchors.fill: parent
-                                        anchors.margins: 4
+                                        anchors.fill: parent; anchors.margins: 2
                                         source: modelData.url
                                         fillMode: Image.PreserveAspectCrop
                                         asynchronous: true
                                     }
                                     
-                                    // Overlay with name
-                                    Rectangle {
-                                        anchors.left: parent.left
-                                        anchors.right: parent.right
-                                        anchors.bottom: parent.bottom
-                                        height: 22
-                                        radius: 4
-                                        color: Qt.rgba(0, 0, 0, 0.7)
-                                        
-                                        Rectangle {
-                                            anchors.left: parent.left
-                                            anchors.right: parent.right
-                                            anchors.top: parent.top
-                                            height: 6
-                                            color: parent.color
-                                        }
-                                        
-                                        Text {
-                                            anchors.centerIn: parent
-                                            text: modelData.name
-                                            font.pixelSize: 9
-                                            color: "#ffffff"
-                                            elide: Text.ElideMiddle
-                                            width: parent.width - 8
-                                            horizontalAlignment: Text.AlignHCenter
-                                        }
-                                    }
-                                    
-                                    // Selected checkmark
-                                    Rectangle {
-                                        visible: Storage.getWallpaperUrl().indexOf(modelData.name) !== -1
-                                        anchors.top: parent.top
-                                        anchors.right: parent.right
-                                        anchors.margins: 6
-                                        width: 20
-                                        height: 20
-                                        radius: 10
-                                        color: "#4a9eff"
-                                        
-                                        Text {
-                                            anchors.centerIn: parent
-                                            text: "✓"
-                                            font.pixelSize: 11
-                                            font.bold: true
-                                            color: "#ffffff"
-                                        }
-                                    }
-                                    
                                     MouseArea {
-                                        id: wpMouse
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor
+                                        id: mMouse
+                                        anchors.fill: parent; hoverEnabled: true
                                         onClicked: {
-                                            settingsApp.wallpaperSelected(modelData.path)
+                                            Storage.setWallpaper(modelData.path)
+                                            // UI updates via Connection
                                         }
                                     }
-                                    
-                                    scale: wpMouse.pressed ? 0.97 : 1.0
-                                    Behavior on scale { NumberAnimation { duration: 50 } }
                                 }
                             }
                             
-                            // Empty state
+                            // Better empty state
                             Column {
                                 anchors.centerIn: parent
-                                spacing: 12
+                                spacing: 6
                                 visible: wallpapers.length === 0
-                                
+                                width: parent.width - 40
+                                Text { anchors.horizontalCenter: parent.horizontalCenter; text: "🖼"; font.pixelSize: 28; opacity: 0.4 }
                                 Text {
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                    text: "🖼"
-                                    font.pixelSize: 40
-                                    opacity: 0.4
-                                }
-                                
-                                Text {
+                                    width: parent.width
                                     anchors.horizontalCenter: parent.horizontalCenter
                                     text: "No wallpapers found"
-                                    font.pixelSize: 14
-                                    color: "#888888"
+                                    font.pixelSize: currentFontSize
+                                    font.bold: isBold
+                                    color: "#888"
+                                    horizontalAlignment: Text.AlignHCenter
+                                    wrapMode: Text.Wrap
                                 }
-                                
                                 Text {
+                                    width: parent.width
                                     anchors.horizontalCenter: parent.horizontalCenter
-                                    text: "Add images to:"
-                                    font.pixelSize: 11
-                                    color: "#666666"
-                                }
-                                
-                                Rectangle {
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                    width: 280
-                                    height: 28
-                                    radius: 4
-                                    color: Qt.rgba(0, 0, 0, 0.3)
-                                    
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: "Storage/User/Pictures/Wallpapers"
-                                        font.family: "Consolas"
-                                        font.pixelSize: 10
-                                        color: "#aaaaaa"
-                                    }
+                                    text: "Place images in Storage/User/Pictures/Wallpapers"
+                                    font.pixelSize: currentFontSize-2
+                                    font.bold: isBold
+                                    color: "#666"
+                                    horizontalAlignment: Text.AlignHCenter
+                                    wrapMode: Text.Wrap
                                 }
                             }
                         }
-                        
-                        Item { height: 20 }
                     }
                 }
                 
                 // ===== DISPLAY =====
-                ColumnLayout {
-                    spacing: 20
-                    
-                    Column {
-                        spacing: 4
-                        
-                        Text {
-                            text: "🖥 Display"
-                            font.pixelSize: 22
-                            font.bold: true
-                            color: "#ffffff"
-                        }
-                        
-                        Text {
-                            text: "Configure display settings"
-                            font.pixelSize: 12
-                            color: "#888888"
-                        }
-                    }
+                Column {
+                    spacing: 14
+                    Text { text: "🖥 Display"; font.pixelSize: 18; font.bold: true; color: "#ffffff" }
                     
                     Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 100
-                        radius: 8
-                        color: Qt.rgba(0, 0, 0, 0.2)
-                        
+                        width: parent.width; height: 160
+                        radius: 6; color: Qt.rgba(0,0,0,0.25)
                         Column {
-                            anchors.centerIn: parent
-                            spacing: 8
+                            anchors.fill: parent; anchors.margins: 12; spacing: 14
                             
-                            Text {
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                text: "🚧"
-                                font.pixelSize: 32
+                            // Size
+                            Column {
+                                spacing: 8
+                                Text { text: "Text Size"; font.pixelSize: currentFontSize; font.bold: true; color: "#fff" }
+                                Row {
+                                    spacing: 10
+                                    Repeater {
+                                        model: ["Small", "Normal", "Large", "XLarge"]
+                                        Rectangle {
+                                            width: 70; height: 36; radius: 4
+                                            color: Accessibility.fontSizePreset === index ? "#4a9eff" : Qt.rgba(1,1,1,0.1)
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: modelData
+                                                font.pixelSize: fontSizes[index]
+                                                font.bold: isBold
+                                                color: "#fff"
+                                            }
+                                            MouseArea { anchors.fill: parent; onClicked: Accessibility.setFontSizePreset(index) }
+                                        }
+                                    }
+                                }
                             }
                             
-                            Text {
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                text: "Display settings coming in a future update"
-                                font.pixelSize: 12
-                                color: "#888888"
+                            // Bold
+                            Row {
+                                spacing: 14
+                                Rectangle {
+                                    width: 24; height: 24; radius: 4
+                                    color: Accessibility.boldText ? "#4a9eff" : Qt.rgba(1,1,1,0.1)
+                                    Text { anchors.centerIn: parent; text: "B"; font.bold: true; color: "#fff" }
+                                    MouseArea { anchors.fill: parent; onClicked: Accessibility.setBoldText(!Accessibility.boldText) }
+                                }
+                                Text { 
+                                    text: "Bold Text"
+                                    font.pixelSize: currentFontSize
+                                    font.bold: isBold
+                                    color: "#fff"
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
                             }
                         }
                     }
-                    
-                    Item { Layout.fillHeight: true }
                 }
                 
                 // ===== SYSTEM =====
-                ColumnLayout {
-                    spacing: 20
+                Column {
+                    spacing: 14
+                    Text { text: "💻 System Info"; font.pixelSize: 18; font.bold: true; color: "#ffffff" }
                     
-                    Column {
-                        spacing: 4
-                        
-                        Text {
-                            text: "⚙ System"
-                            font.pixelSize: 22
-                            font.bold: true
-                            color: "#ffffff"
-                        }
-                        
-                        Text {
-                            text: "System preferences and options"
-                            font.pixelSize: 12
-                            color: "#888888"
-                        }
-                    }
-                    
+                    // Resources
                     Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 100
-                        radius: 8
-                        color: Qt.rgba(0, 0, 0, 0.2)
-                        
-                        Column {
-                            anchors.centerIn: parent
-                            spacing: 8
-                            
-                            Text {
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                text: "🚧"
-                                font.pixelSize: 32
+                        width: parent.width; height: 70
+                        radius: 6; color: Qt.rgba(0,0,0,0.25)
+                        Row {
+                            anchors.fill: parent; anchors.margins: 12; spacing: 30
+                            Column {
+                                spacing: 4
+                                Text { text: "CPU"; color: "#888"; font.pixelSize: 10; font.bold: isBold }
+                                Rectangle { width: 100; height: 6; radius: 3; color: "#333"; Rectangle { width: parent.width * (ResourceMonitor.cpuPercent/100); height: 6; radius: 3; color: "#4a9eff" } }
+                                Text { text: Math.round(ResourceMonitor.cpuPercent)+"%"; color:"#fff"; font.bold: true }
                             }
-                            
-                            Text {
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                text: "System settings coming in a future update"
-                                font.pixelSize: 12
-                                color: "#888888"
+                            Column {
+                                spacing: 4
+                                Text { text: "RAM"; color: "#888"; font.pixelSize: 10; font.bold: isBold }
+                                Rectangle { width: 100; height: 6; radius: 3; color: "#333"; Rectangle { width: parent.width * (ResourceMonitor.memoryPercent/100); height: 6; radius: 3; color: "#41cd52" } }
+                                Text { text: ResourceMonitor.memoryUsedGB + " GB"; color:"#fff"; font.bold: true }
                             }
                         }
                     }
                     
-                    Item { Layout.fillHeight: true }
-                }
-                
-                // ===== STORAGE =====
-                ColumnLayout {
-                    spacing: 20
-                    
-                    Column {
-                        spacing: 4
-                        
-                        Text {
-                            text: "💾 Storage"
-                            font.pixelSize: 22
-                            font.bold: true
-                            color: "#ffffff"
-                        }
-                        
-                        Text {
-                            text: "View storage information"
-                            font.pixelSize: 12
-                            color: "#888888"
-                        }
-                    }
-                    
+                    // Specs
                     Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 140
-                        radius: 8
-                        color: Qt.rgba(0, 0, 0, 0.2)
-                        border.width: 1
-                        border.color: Qt.rgba(1, 1, 1, 0.1)
-                        
+                        width: parent.width; height: 100
+                        radius: 6; color: Qt.rgba(0,0,0,0.25)
                         Column {
-                            anchors.fill: parent
-                            anchors.margins: 16
-                            spacing: 12
-                            
-                            Text {
-                                text: "Storage Location"
-                                font.pixelSize: 14
-                                font.bold: true
-                                color: "#ffffff"
+                            anchors.fill: parent; anchors.margins: 10; spacing: 8
+                            Row {
+                                spacing: 8
+                                Text { text: "CPU"; color: "#aaa"; width: 40; font.bold: isBold }
+                                Text { text: systemInfo.cpu ? systemInfo.cpu.name : "Loading..."; color: "#fff"; width: 250; elide: Text.ElideRight; font.bold: isBold }
                             }
-                            
-                            Rectangle {
-                                width: parent.width
-                                height: 32
-                                radius: 4
-                                color: Qt.rgba(0, 0, 0, 0.3)
-                                
-                                Text {
-                                    anchors.left: parent.left
-                                    anchors.leftMargin: 10
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: Storage.storageRoot
-                                    font.family: "Consolas"
-                                    font.pixelSize: 11
-                                    color: "#aaaaaa"
-                                }
-                            }
-                            
-                            Text {
-                                text: "All your files are stored in this directory. GlassOS only accesses files within this folder."
-                                font.pixelSize: 11
-                                color: "#888888"
-                                wrapMode: Text.Wrap
-                                width: parent.width
+                            Row {
+                                spacing: 8
+                                Text { text: "OS"; color: "#aaa"; width: 40; font.bold: isBold }
+                                Text { text: systemInfo.os || "Loading..."; color: "#fff"; width: 250; elide: Text.ElideRight; font.bold: isBold }
                             }
                         }
                     }
-                    
-                    Item { Layout.fillHeight: true }
                 }
                 
                 // ===== ABOUT =====
-                ColumnLayout {
-                    spacing: 20
-                    
-                    Column {
-                        spacing: 4
-                        
-                        Text {
-                            text: "ℹ About GlassOS"
-                            font.pixelSize: 22
-                            font.bold: true
-                            color: "#ffffff"
-                        }
-                        
-                        Text {
-                            text: "System information"
-                            font.pixelSize: 12
-                            color: "#888888"
-                        }
-                    }
-                    
+                Column {
+                    spacing: 14
+                    Text { text: "ℹ About"; font.pixelSize: 18; font.bold: true; color: "#ffffff" }
                     Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 150
-                        radius: 8
-                        color: Qt.rgba(0, 0, 0, 0.2)
-                        border.width: 1
-                        border.color: Qt.rgba(1, 1, 1, 0.1)
-                        
+                        width: parent.width; height: 100; radius: 6; color: Qt.rgba(0,0,0,0.25)
                         Row {
-                            anchors.fill: parent
-                            anchors.margins: 20
-                            spacing: 24
-                            
-                            Rectangle {
-                                width: 100
-                                height: 100
-                                radius: 20
-                                
-                                gradient: Gradient {
-                                    GradientStop { position: 0.0; color: "#4a9eff" }
-                                    GradientStop { position: 1.0; color: "#2a5298" }
-                                }
-                                
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "🌟"
-                                    font.pixelSize: 48
-                                }
-                            }
-                            
+                            anchors.fill: parent; anchors.margins: 14; spacing: 14
+                            Text { text: "🌟"; font.pixelSize: 40 }
                             Column {
                                 anchors.verticalCenter: parent.verticalCenter
-                                spacing: 6
-                                
-                                Text {
-                                    text: "GlassOS"
-                                    font.pixelSize: 28
-                                    font.bold: true
-                                    color: "#ffffff"
-                                }
-                                
-                                Text {
-                                    text: "Version 1.0.0"
-                                    font.pixelSize: 14
-                                    color: "#aaaaaa"
-                                }
-                                
-                                Text {
-                                    text: "Aero-Mojo Desktop Environment"
-                                    font.pixelSize: 12
-                                    color: "#888888"
-                                }
-                                
-                                Row {
-                                    spacing: 8
-                                    topPadding: 4
-                                    
-                                    Rectangle {
-                                        width: 70
-                                        height: 20
-                                        radius: 3
-                                        color: "#306998"
-                                        
-                                        Text {
-                                            anchors.centerIn: parent
-                                            text: "Python"
-                                            font.pixelSize: 9
-                                            color: "#ffd43b"
-                                        }
-                                    }
-                                    
-                                    Rectangle {
-                                        width: 50
-                                        height: 20
-                                        radius: 3
-                                        color: "#41cd52"
-                                        
-                                        Text {
-                                            anchors.centerIn: parent
-                                            text: "Qt"
-                                            font.pixelSize: 9
-                                            color: "#ffffff"
-                                        }
-                                    }
-                                    
-                                    Rectangle {
-                                        width: 50
-                                        height: 20
-                                        radius: 3
-                                        color: "#f0db4f"
-                                        
-                                        Text {
-                                            anchors.centerIn: parent
-                                            text: "QML"
-                                            font.pixelSize: 9
-                                            color: "#323330"
-                                        }
-                                    }
-                                }
+                                Text { text: "GlassOS 1.0"; font.pixelSize: 22; font.bold: true; color: "#fff" }
+                                Text { text: "A premium Python desktop experience"; color: "#aaa"; font.pixelSize: currentFontSize; font.bold: isBold }
                             }
                         }
                     }
-                    
-                    Item { Layout.fillHeight: true }
                 }
             }
         }

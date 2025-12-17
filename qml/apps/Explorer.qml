@@ -1,4 +1,4 @@
-// GlassOS File Explorer - With File Preview and Context Menu
+// GlassOS File Explorer - Consistent Menus & Open With Support
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
@@ -11,20 +11,20 @@ Rectangle {
     property var files: []
     property var selectedFile: null
     
-    signal openFile(string path, string name, bool isImage, bool isText)
+    signal openFileRequest(string path, string name, bool isImage, bool isText)
     signal setAsWallpaper(string path)
+    signal openWithApp(string path, string appName)
     
     property var quickAccess: [
         { name: "Desktop", path: "/", icon: "🖥" },
         { name: "Documents", path: "/Documents", icon: "📄" },
         { name: "Downloads", path: "/Downloads", icon: "⬇" },
         { name: "Pictures", path: "/Pictures", icon: "🖼" },
-        { name: "Videos", path: "/Videos", icon: "🎬" }
+        { name: "Videos", path: "/Videos", icon: "🎬" },
+        { name: "Apps", path: "/Apps", icon: "📦" }
     ]
     
-    Component.onCompleted: {
-        loadFolder(currentPath)
-    }
+    Component.onCompleted: loadFolder(currentPath)
     
     function loadFolder(path) {
         currentPath = path
@@ -42,61 +42,295 @@ Rectangle {
         }
     }
     
-    function isTextFile(name) {
-        var ext = name.toLowerCase().split('.').pop()
-        return ["txt", "md", "json", "xml", "html", "css", "js", "py", "qml", "log", "ini", "cfg"].indexOf(ext) !== -1
+    function getFileExtension(name) {
+        var parts = name.split('.')
+        return parts.length > 1 ? '.' + parts[parts.length - 1].toLowerCase() : ''
     }
     
-    // Context menu
-    Menu {
-        id: contextMenu
+    // ALL text-like files should be editable in Notepad
+    function isTextFile(name) {
+        var ext = getFileExtension(name)
+        var textExts = [".txt", ".md", ".json", ".xml", ".html", ".css", ".js", ".py", 
+                        ".qml", ".log", ".ini", ".cfg", ".yaml", ".yml", ".csv", ".sh", 
+                        ".bat", ".ps1", ".conf", ".gitignore", ".env"]
+        return textExts.indexOf(ext) !== -1
+    }
+    
+    function isImageFile(name) {
+        var ext = getFileExtension(name)
+        return [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".ico"].indexOf(ext) !== -1
+    }
+    
+    function getFileIcon(file) {
+        if (file.isDirectory) return "📁"
+        if (file.isImage || isImageFile(file.name)) return "🖼"
         
-        MenuItem {
-            text: "Open"
-            enabled: selectedFile !== null
-            onTriggered: {
-                if (selectedFile.isDirectory) {
-                    loadFolder(selectedFile.path)
-                } else {
-                    openFilePreview(selectedFile)
+        var ext = getFileExtension(file.name)
+        var icons = {
+            ".py": "🐍", ".js": "📜", ".qml": "📜",
+            ".json": "📋", ".xml": "📋", ".html": "🌐",
+            ".mp4": "🎬", ".mp3": "🎵", ".wav": "🎵",
+            ".zip": "📦", ".pdf": "📕", ".md": "📝"
+        }
+        return icons[ext] || "📄"
+    }
+    
+    function openFile(file) {
+        if (file.isDirectory) {
+            loadFolder(file.path)
+            return
+        }
+        
+        // All non-image files open in Notepad (editable text editor)
+        if (file.isImage || isImageFile(file.name)) {
+            explorer.openFileRequest(file.path, file.name, true, false)
+        } else {
+            // Open in Notepad for editing
+            explorer.openFileRequest(file.path, file.name, false, true)
+        }
+    }
+    
+    function createNewFolder() {
+        newItemDialog.isFolder = true
+        newItemDialog.visible = true
+        newItemInput.text = "New Folder"
+        newItemInput.selectAll()
+        newItemInput.forceActiveFocus()
+    }
+    
+    function createNewFile() {
+        newItemDialog.isFolder = false
+        newItemDialog.visible = true
+        newItemInput.text = "New File.txt"
+        newItemInput.selectAll()
+        newItemInput.forceActiveFocus()
+    }
+    
+    // ===== CONSISTENT CONTEXT MENU STYLE =====
+    component StyledMenu: Rectangle {
+        id: menuRoot
+        visible: false
+        width: 180
+        radius: 6
+        z: 1000
+        
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: Qt.rgba(0.18, 0.20, 0.25, 0.98) }
+            GradientStop { position: 1.0; color: Qt.rgba(0.12, 0.14, 0.18, 0.98) }
+        }
+        
+        border.width: 1
+        border.color: Qt.rgba(0.4, 0.6, 0.9, 0.4)
+        
+        // Shadow
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: -4
+            radius: 10
+            color: Qt.rgba(0, 0, 0, 0.5)
+            z: -1
+        }
+        
+        default property alias content: menuColumn.children
+        property int itemCount: menuColumn.children.length
+        
+        height: menuColumn.height + 12
+        
+        Column {
+            id: menuColumn
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: 6
+            spacing: 2
+        }
+        
+        function show(x, y) {
+            menuRoot.x = x
+            menuRoot.y = y
+            menuRoot.visible = true
+        }
+        
+        function hide() {
+            menuRoot.visible = false
+        }
+    }
+    
+    component StyledMenuItem: Rectangle {
+        id: menuItem
+        height: 28
+        radius: 4
+        color: itemMouse.containsMouse ? Qt.rgba(0.3, 0.5, 0.8, 0.4) : "transparent"
+        
+        property string text: ""
+        property string icon: ""
+        property bool enabled: true
+        signal clicked()
+        
+        opacity: enabled ? 1.0 : 0.4
+        
+        Row {
+            anchors.fill: parent
+            anchors.leftMargin: 10
+            spacing: 8
+            
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: menuItem.icon
+                font.pixelSize: 12
+                visible: menuItem.icon !== ""
+            }
+            
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: menuItem.text
+                font.pixelSize: 11
+                color: "#ffffff"
+            }
+        }
+        
+        MouseArea {
+            id: itemMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: menuItem.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: {
+                if (menuItem.enabled) {
+                    menuItem.clicked()
                 }
             }
         }
+    }
+    
+    component MenuSeparator: Rectangle {
+        height: 1
+        color: Qt.rgba(1, 1, 1, 0.15)
+    }
+    
+    // File context menu
+    StyledMenu {
+        id: fileContextMenu
         
-        MenuSeparator {}
+        StyledMenuItem {
+            width: parent.width - 12
+            text: "Open"
+            icon: "📂"
+            onClicked: { openFile(selectedFile); fileContextMenu.hide() }
+        }
         
-        MenuItem {
-            text: "Set as Wallpaper"
-            enabled: selectedFile !== null && selectedFile.isImage
-            onTriggered: {
-                Storage.setWallpaper(selectedFile.path)
-                explorer.setAsWallpaper(selectedFile.path)
+        StyledMenuItem {
+            width: parent.width - 12
+            text: "Open with GlassPad"
+            icon: "📝"
+            visible: !selectedFile?.isDirectory && !isImageFile(selectedFile?.name || "")
+            onClicked: { 
+                explorer.openFileRequest(selectedFile.path, selectedFile.name, false, true)
+                fileContextMenu.hide()
             }
         }
         
-        MenuSeparator {}
+        StyledMenuItem {
+            width: parent.width - 12
+            text: "Open with ImageViewer"
+            icon: "🖼"
+            visible: selectedFile && isImageFile(selectedFile.name)
+            onClicked: { 
+                explorer.openFileRequest(selectedFile.path, selectedFile.name, true, false)
+                fileContextMenu.hide()
+            }
+        }
         
-        MenuItem {
+        MenuSeparator { width: parent.width - 12 }
+        
+        StyledMenuItem {
+            width: parent.width - 12
+            text: "Set as Wallpaper"
+            icon: "🖼"
+            visible: selectedFile && (selectedFile.isImage || isImageFile(selectedFile.name))
+            onClicked: { 
+                Storage.setWallpaper(selectedFile.path)
+                explorer.setAsWallpaper(selectedFile.path)
+                fileContextMenu.hide()
+            }
+        }
+        
+        MenuSeparator { width: parent.width - 12 }
+        
+        StyledMenuItem {
+            width: parent.width - 12
+            text: "Cut"
+            icon: "✂"
+            onClicked: { fileContextMenu.hide() }
+        }
+        
+        StyledMenuItem {
+            width: parent.width - 12
+            text: "Copy"
+            icon: "📋"
+            onClicked: { fileContextMenu.hide() }
+        }
+        
+        StyledMenuItem {
+            width: parent.width - 12
+            text: "Rename"
+            icon: "✏"
+            onClicked: { 
+                fileContextMenu.hide()
+                renameDialog.visible = true
+                renameInput.text = selectedFile.name
+                renameInput.selectAll()
+                renameInput.forceActiveFocus()
+            }
+        }
+        
+        MenuSeparator { width: parent.width - 12 }
+        
+        StyledMenuItem {
+            width: parent.width - 12
+            text: "Delete"
+            icon: "🗑"
+            onClicked: { 
+                fileContextMenu.hide()
+                deleteDialog.visible = true
+            }
+        }
+    }
+    
+    // Background context menu
+    StyledMenu {
+        id: bgContextMenu
+        
+        StyledMenuItem {
+            width: parent.width - 12
+            text: "New Folder"
+            icon: "📁"
+            onClicked: { bgContextMenu.hide(); createNewFolder() }
+        }
+        
+        StyledMenuItem {
+            width: parent.width - 12
+            text: "New Text File"
+            icon: "📄"
+            onClicked: { bgContextMenu.hide(); createNewFile() }
+        }
+        
+        MenuSeparator { width: parent.width - 12 }
+        
+        StyledMenuItem {
+            width: parent.width - 12
             text: "Refresh"
-            onTriggered: loadFolder(currentPath)
+            icon: "🔄"
+            onClicked: { bgContextMenu.hide(); loadFolder(currentPath) }
+        }
+        
+        StyledMenuItem {
+            width: parent.width - 12
+            text: "Paste"
+            icon: "📋"
+            enabled: false
+            onClicked: { bgContextMenu.hide() }
         }
     }
-    
-    function openFilePreview(file) {
-        if (file.isImage) {
-            previewImage.source = Storage.getFileUrl(file.path)
-            previewTitle.text = file.name
-            previewType = "image"
-            previewOverlay.visible = true
-        } else if (isTextFile(file.name)) {
-            previewText.text = Storage.readFile(file.path)
-            previewTitle.text = file.name
-            previewType = "text"
-            previewOverlay.visible = true
-        }
-    }
-    
-    property string previewType: "none"
     
     RowLayout {
         anchors.fill: parent
@@ -104,9 +338,9 @@ Rectangle {
         
         // Sidebar
         Rectangle {
-            Layout.preferredWidth: 150
+            Layout.preferredWidth: 130
             Layout.fillHeight: true
-            color: Qt.rgba(0, 0, 0, 0.2)
+            color: Qt.rgba(0, 0, 0, 0.25)
             
             Column {
                 anchors.fill: parent
@@ -115,10 +349,10 @@ Rectangle {
                 
                 Text {
                     text: "Quick Access"
-                    font.pixelSize: 11
+                    font.pixelSize: 10
                     font.bold: true
                     color: "#888888"
-                    leftPadding: 6
+                    leftPadding: 4
                     bottomPadding: 6
                 }
                 
@@ -129,11 +363,8 @@ Rectangle {
                         width: parent.width
                         height: 28
                         radius: 4
-                        color: {
-                            if (currentPath === modelData.path) return Qt.rgba(0.3, 0.6, 0.9, 0.3)
-                            if (sidebarMouse.containsMouse) return Qt.rgba(1, 1, 1, 0.1)
-                            return "transparent"
-                        }
+                        color: currentPath === modelData.path ? Qt.rgba(0.3, 0.6, 0.9, 0.4) :
+                               (sidebarMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.12) : "transparent")
                         
                         Row {
                             anchors.fill: parent
@@ -158,18 +389,41 @@ Rectangle {
                             id: sidebarMouse
                             anchors.fill: parent
                             hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
                             onClicked: loadFolder(modelData.path)
                         }
                     }
                 }
+                
+                Item { height: 10; width: 1 }
+                
+                // New button
+                Rectangle {
+                    width: parent.width
+                    height: 30
+                    radius: 4
+                    color: newBtnMouse.containsMouse ? Qt.rgba(0.3, 0.5, 0.8, 0.4) : Qt.rgba(0.3, 0.5, 0.8, 0.2)
+                    border.width: 1
+                    border.color: Qt.rgba(0.4, 0.6, 0.9, 0.3)
+                    
+                    Row {
+                        anchors.centerIn: parent
+                        spacing: 5
+                        Text { text: "➕"; font.pixelSize: 11 }
+                        Text { text: "New"; font.pixelSize: 10; color: "#fff" }
+                    }
+                    
+                    MouseArea {
+                        id: newBtnMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            bgContextMenu.show(parent.x + 130, parent.y)
+                        }
+                    }
+                }
             }
-        }
-        
-        // Separator
-        Rectangle {
-            Layout.preferredWidth: 1
-            Layout.fillHeight: true
-            color: Qt.rgba(1, 1, 1, 0.1)
         }
         
         // Main content
@@ -182,92 +436,59 @@ Rectangle {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 36
-                color: Qt.rgba(0, 0, 0, 0.15)
+                color: Qt.rgba(0, 0, 0, 0.2)
                 
                 Row {
                     anchors.fill: parent
                     anchors.leftMargin: 8
                     spacing: 4
                     
-                    // Back button
+                    // Back
                     Rectangle {
                         width: 28
                         height: 26
                         anchors.verticalCenter: parent.verticalCenter
-                        radius: 3
+                        radius: 4
                         color: backMouse.containsMouse && currentPath !== "/" ? Qt.rgba(1,1,1,0.15) : "transparent"
                         opacity: currentPath !== "/" ? 1 : 0.4
                         
-                        Text {
-                            anchors.centerIn: parent
-                            text: "←"
-                            font.pixelSize: 14
-                            color: "#ffffff"
-                        }
+                        Text { anchors.centerIn: parent; text: "←"; font.pixelSize: 14; color: "#fff" }
                         
                         MouseArea {
                             id: backMouse
                             anchors.fill: parent
                             hoverEnabled: true
+                            cursorShape: currentPath !== "/" ? Qt.PointingHandCursor : Qt.ArrowCursor
                             onClicked: if (currentPath !== "/") goUp()
                         }
                     }
                     
-                    // Up button
+                    // Refresh
                     Rectangle {
                         width: 28
                         height: 26
                         anchors.verticalCenter: parent.verticalCenter
-                        radius: 3
-                        color: upMouse.containsMouse && currentPath !== "/" ? Qt.rgba(1,1,1,0.15) : "transparent"
-                        opacity: currentPath !== "/" ? 1 : 0.4
-                        
-                        Text {
-                            anchors.centerIn: parent
-                            text: "↑"
-                            font.pixelSize: 14
-                            color: "#ffffff"
-                        }
-                        
-                        MouseArea {
-                            id: upMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            onClicked: if (currentPath !== "/") goUp()
-                        }
-                    }
-                    
-                    // Refresh button
-                    Rectangle {
-                        width: 28
-                        height: 26
-                        anchors.verticalCenter: parent.verticalCenter
-                        radius: 3
+                        radius: 4
                         color: refreshMouse.containsMouse ? Qt.rgba(1,1,1,0.15) : "transparent"
                         
-                        Text {
-                            anchors.centerIn: parent
-                            text: "🔄"
-                            font.pixelSize: 12
-                        }
+                        Text { anchors.centerIn: parent; text: "🔄"; font.pixelSize: 12 }
                         
                         MouseArea {
                             id: refreshMouse
                             anchors.fill: parent
                             hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
                             onClicked: loadFolder(currentPath)
                         }
                     }
                     
-                    Item { width: 8; height: 1 }
-                    
                     // Path bar
                     Rectangle {
-                        width: explorer.width - 280
+                        width: explorer.width - 350
                         height: 26
                         anchors.verticalCenter: parent.verticalCenter
-                        radius: 3
-                        color: Qt.rgba(0, 0, 0, 0.2)
+                        radius: 4
+                        color: Qt.rgba(0, 0, 0, 0.25)
                         border.width: 1
                         border.color: Qt.rgba(1, 1, 1, 0.1)
                         
@@ -276,13 +497,8 @@ Rectangle {
                             anchors.leftMargin: 8
                             spacing: 6
                             
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: "📁"
-                                font.pixelSize: 12
-                            }
-                            
-                            Text {
+                            Text { anchors.verticalCenter: parent.verticalCenter; text: "📁"; font.pixelSize: 12 }
+                            Text { 
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: currentPath === "/" ? "Storage" : "Storage" + currentPath
                                 font.pixelSize: 11
@@ -293,29 +509,39 @@ Rectangle {
                 }
             }
             
-            // File grid area
+            // File grid
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.margins: 8
-                radius: 4
+                radius: 6
                 color: Qt.rgba(0, 0, 0, 0.15)
+                
+                MouseArea {
+                    anchors.fill: parent
+                    acceptedButtons: Qt.RightButton
+                    onClicked: function(mouse) {
+                        selectedFile = null
+                        fileContextMenu.hide()
+                        bgContextMenu.show(mouse.x, mouse.y)
+                    }
+                }
                 
                 GridView {
                     id: fileGrid
                     anchors.fill: parent
                     anchors.margins: 8
-                    cellWidth: 100
-                    cellHeight: 90
+                    cellWidth: 85
+                    cellHeight: 85
                     clip: true
                     model: files
                     
                     delegate: Rectangle {
-                        id: fileItem
-                        width: fileGrid.cellWidth - 4
-                        height: fileGrid.cellHeight - 4
+                        width: 80
+                        height: 80
                         radius: 4
-                        color: fileMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.1) : "transparent"
+                        color: selectedFile === modelData ? Qt.rgba(0.3, 0.5, 0.8, 0.4) : 
+                               (fileMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.12) : "transparent")
                         border.width: selectedFile === modelData ? 1 : 0
                         border.color: "#4a9eff"
                         
@@ -323,43 +549,31 @@ Rectangle {
                             anchors.centerIn: parent
                             spacing: 4
                             
-                            // Icon or thumbnail
                             Item {
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                width: 48
-                                height: 48
+                                width: 44
+                                height: 44
                                 
-                                // Folder/file icon
                                 Text {
                                     anchors.centerIn: parent
-                                    text: modelData.isDirectory ? "📁" : 
-                                          (modelData.isImage ? "🖼" : "📄")
+                                    text: getFileIcon(modelData)
                                     font.pixelSize: 32
-                                    visible: !modelData.isImage || !thumbImage.visible
+                                    visible: !modelData.isImage || thumbImg.status !== Image.Ready
                                 }
                                 
-                                // Image thumbnail
                                 Image {
-                                    id: thumbImage
+                                    id: thumbImg
                                     anchors.fill: parent
                                     source: modelData.isImage ? Storage.getFileUrl(modelData.path) : ""
                                     fillMode: Image.PreserveAspectCrop
                                     visible: modelData.isImage && status === Image.Ready
                                     asynchronous: true
-                                    
-                                    Rectangle {
-                                        anchors.fill: parent
-                                        color: "transparent"
-                                        border.width: 1
-                                        border.color: Qt.rgba(1, 1, 1, 0.2)
-                                        radius: 4
-                                    }
                                 }
                             }
                             
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                width: 90
+                                width: 75
                                 text: modelData.name
                                 font.pixelSize: 10
                                 color: "#ffffff"
@@ -376,18 +590,13 @@ Rectangle {
                             
                             onClicked: function(mouse) {
                                 selectedFile = modelData
+                                bgContextMenu.hide()
                                 if (mouse.button === Qt.RightButton) {
-                                    contextMenu.popup()
+                                    fileContextMenu.show(mouse.x + parent.x + 130, mouse.y + parent.y + 36)
                                 }
                             }
                             
-                            onDoubleClicked: {
-                                if (modelData.isDirectory) {
-                                    loadFolder(modelData.path)
-                                } else {
-                                    openFilePreview(modelData)
-                                }
-                            }
+                            onDoubleClicked: openFile(modelData)
                         }
                         
                         scale: fileMouse.pressed ? 0.95 : 1.0
@@ -395,25 +604,15 @@ Rectangle {
                     }
                 }
                 
-                // Empty folder message
+                // Empty state
                 Column {
                     anchors.centerIn: parent
                     spacing: 8
                     visible: files.length === 0
                     
-                    Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        text: "📂"
-                        font.pixelSize: 48
-                        opacity: 0.4
-                    }
-                    
-                    Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        text: "This folder is empty"
-                        font.pixelSize: 12
-                        color: "#666666"
-                    }
+                    Text { anchors.horizontalCenter: parent.horizontalCenter; text: "📂"; font.pixelSize: 48; opacity: 0.35 }
+                    Text { anchors.horizontalCenter: parent.horizontalCenter; text: "Empty folder"; font.pixelSize: 12; color: "#666" }
+                    Text { anchors.horizontalCenter: parent.horizontalCenter; text: "Right-click to create"; font.pixelSize: 10; color: "#555" }
                 }
             }
             
@@ -421,171 +620,260 @@ Rectangle {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 24
-                color: Qt.rgba(0, 0, 0, 0.2)
+                color: Qt.rgba(0, 0, 0, 0.25)
                 
-                Text {
+                Row {
                     anchors.left: parent.left
                     anchors.leftMargin: 10
                     anchors.verticalCenter: parent.verticalCenter
-                    text: files.length + " items" + (selectedFile ? " | Selected: " + selectedFile.name : "")
-                    font.pixelSize: 10
-                    color: "#888888"
+                    spacing: 16
+                    
+                    Text { text: files.length + " items"; font.pixelSize: 10; color: "#888" }
+                    Text { 
+                        visible: selectedFile !== null
+                        text: "Selected: " + (selectedFile ? selectedFile.name : "")
+                        font.pixelSize: 10
+                        color: "#aaa"
+                    }
                 }
             }
         }
     }
     
-    // ===== FILE PREVIEW OVERLAY =====
+    // ===== NEW ITEM DIALOG =====
     Rectangle {
-        id: previewOverlay
+        id: newItemDialog
         anchors.fill: parent
-        color: Qt.rgba(0, 0, 0, 0.8)
+        color: Qt.rgba(0, 0, 0, 0.6)
         visible: false
+        z: 100
         
-        MouseArea {
-            anchors.fill: parent
-            onClicked: previewOverlay.visible = false
-        }
+        property bool isFolder: true
+        
+        MouseArea { anchors.fill: parent; onClicked: newItemDialog.visible = false }
         
         Rectangle {
             anchors.centerIn: parent
-            width: Math.min(parent.width - 60, 700)
-            height: Math.min(parent.height - 60, 500)
+            width: 320
+            height: 140
             radius: 8
             color: Qt.rgba(0.12, 0.14, 0.18, 0.98)
             border.width: 1
             border.color: Qt.rgba(1, 1, 1, 0.2)
             
-            MouseArea {
-                anchors.fill: parent
-                // Prevent clicks from closing
-            }
+            MouseArea { anchors.fill: parent }
             
             Column {
                 anchors.fill: parent
-                spacing: 0
+                anchors.margins: 16
+                spacing: 12
                 
-                // Header
-                Rectangle {
+                Text {
+                    text: newItemDialog.isFolder ? "📁 New Folder" : "📄 New File"
+                    font.pixelSize: 14
+                    font.bold: true
+                    color: "#ffffff"
+                }
+                
+                TextField {
+                    id: newItemInput
                     width: parent.width
-                    height: 36
-                    radius: 8
-                    color: Qt.rgba(0.2, 0.22, 0.28, 1)
-                    
-                    Rectangle {
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.bottom: parent.bottom
-                        height: 10
-                        color: parent.color
-                    }
-                    
-                    Text {
-                        id: previewTitle
-                        anchors.left: parent.left
-                        anchors.leftMargin: 12
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "Preview"
-                        font.pixelSize: 13
-                        font.bold: true
-                        color: "#ffffff"
-                    }
-                    
-                    // Close button
-                    Rectangle {
-                        anchors.right: parent.right
-                        anchors.top: parent.top
-                        anchors.margins: 4
-                        width: 28
-                        height: 26
+                    height: 32
+                    font.pixelSize: 12
+                    color: "#ffffff"
+                    placeholderText: newItemDialog.isFolder ? "Folder name" : "File name"
+                    placeholderTextColor: "#666"
+                    background: Rectangle {
+                        color: Qt.rgba(0, 0, 0, 0.3)
                         radius: 4
-                        color: previewCloseMouse.containsMouse ? "#e04343" : "transparent"
-                        
-                        Text {
-                            anchors.centerIn: parent
-                            text: "✕"
-                            font.pixelSize: 12
-                            color: "#ffffff"
+                        border.width: 1
+                        border.color: newItemInput.activeFocus ? "#4a9eff" : Qt.rgba(1, 1, 1, 0.15)
+                    }
+                    
+                    Keys.onReturnPressed: doCreate()
+                    Keys.onEscapePressed: newItemDialog.visible = false
+                    
+                    function doCreate() {
+                        var name = newItemInput.text.trim()
+                        if (name) {
+                            var fullPath = currentPath === "/" ? "/" + name : currentPath + "/" + name
+                            if (newItemDialog.isFolder) {
+                                Storage.createDirectory(fullPath)
+                            } else {
+                                Storage.writeFile(fullPath, "")
+                            }
+                            newItemDialog.visible = false
+                            loadFolder(currentPath)
                         }
-                        
-                        MouseArea {
-                            id: previewCloseMouse
+                    }
+                }
+                
+                Row {
+                    anchors.right: parent.right
+                    spacing: 8
+                    
+                    Rectangle {
+                        width: 70; height: 28; radius: 4
+                        color: cancelMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.15) : Qt.rgba(1, 1, 1, 0.08)
+                        Text { anchors.centerIn: parent; text: "Cancel"; font.pixelSize: 11; color: "#fff" }
+                        MouseArea { id: cancelMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: newItemDialog.visible = false }
+                    }
+                    
+                    Rectangle {
+                        width: 70; height: 28; radius: 4
+                        color: createMouse.containsMouse ? Qt.rgba(0.3, 0.5, 0.8, 0.7) : Qt.rgba(0.3, 0.5, 0.8, 0.5)
+                        Text { anchors.centerIn: parent; text: "Create"; font.pixelSize: 11; color: "#fff" }
+                        MouseArea { id: createMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: newItemInput.doCreate() }
+                    }
+                }
+            }
+        }
+    }
+    
+    // ===== DELETE DIALOG =====
+    Rectangle {
+        id: deleteDialog
+        anchors.fill: parent
+        color: Qt.rgba(0, 0, 0, 0.6)
+        visible: false
+        z: 100
+        
+        MouseArea { anchors.fill: parent; onClicked: deleteDialog.visible = false }
+        
+        Rectangle {
+            anchors.centerIn: parent
+            width: 320
+            height: 110
+            radius: 8
+            color: Qt.rgba(0.12, 0.14, 0.18, 0.98)
+            border.width: 1
+            border.color: Qt.rgba(1, 1, 1, 0.2)
+            
+            MouseArea { anchors.fill: parent }
+            
+            Column {
+                anchors.fill: parent
+                anchors.margins: 16
+                spacing: 12
+                
+                Text {
+                    text: "🗑 Delete \"" + (selectedFile ? selectedFile.name : "") + "\"?"
+                    font.pixelSize: 12
+                    color: "#fff"
+                    width: parent.width
+                    elide: Text.ElideMiddle
+                }
+                
+                Text { text: "This cannot be undone."; font.pixelSize: 11; color: "#888" }
+                
+                Row {
+                    anchors.right: parent.right
+                    spacing: 8
+                    
+                    Rectangle {
+                        width: 70; height: 28; radius: 4
+                        color: cancelDelMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.15) : Qt.rgba(1, 1, 1, 0.08)
+                        Text { anchors.centerIn: parent; text: "Cancel"; font.pixelSize: 11; color: "#fff" }
+                        MouseArea { id: cancelDelMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: deleteDialog.visible = false }
+                    }
+                    
+                    Rectangle {
+                        width: 70; height: 28; radius: 4
+                        color: confirmDelMouse.containsMouse ? "#c04040" : "#e04343"
+                        Text { anchors.centerIn: parent; text: "Delete"; font.pixelSize: 11; color: "#fff" }
+                        MouseArea { 
+                            id: confirmDelMouse
                             anchors.fill: parent
                             hoverEnabled: true
-                            onClicked: previewOverlay.visible = false
-                        }
-                    }
-                    
-                    // Set as wallpaper button (for images)
-                    Rectangle {
-                        visible: previewType === "image"
-                        anchors.right: parent.right
-                        anchors.top: parent.top
-                        anchors.margins: 4
-                        anchors.rightMargin: 40
-                        width: 120
-                        height: 26
-                        radius: 4
-                        color: setWpMouse.containsMouse ? Qt.rgba(0.3, 0.5, 0.8, 0.6) : Qt.rgba(0.3, 0.5, 0.8, 0.3)
-                        
-                        Text {
-                            anchors.centerIn: parent
-                            text: "Set as Wallpaper"
-                            font.pixelSize: 10
-                            color: "#ffffff"
-                        }
-                        
-                        MouseArea {
-                            id: setWpMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                Storage.setWallpaper(selectedFile.path)
-                                explorer.setAsWallpaper(selectedFile.path)
+                                if (selectedFile) {
+                                    Storage.deleteItem(selectedFile.path)
+                                    deleteDialog.visible = false
+                                    loadFolder(currentPath)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // ===== RENAME DIALOG =====
+    Rectangle {
+        id: renameDialog
+        anchors.fill: parent
+        color: Qt.rgba(0, 0, 0, 0.6)
+        visible: false
+        z: 100
+        
+        MouseArea { anchors.fill: parent; onClicked: renameDialog.visible = false }
+        
+        Rectangle {
+            anchors.centerIn: parent
+            width: 320
+            height: 130
+            radius: 8
+            color: Qt.rgba(0.12, 0.14, 0.18, 0.98)
+            border.width: 1
+            border.color: Qt.rgba(1, 1, 1, 0.2)
+            
+            MouseArea { anchors.fill: parent }
+            
+            Column {
+                anchors.fill: parent
+                anchors.margins: 16
+                spacing: 12
+                
+                Text { text: "✏ Rename"; font.pixelSize: 14; font.bold: true; color: "#fff" }
+                
+                TextField {
+                    id: renameInput
+                    width: parent.width
+                    height: 32
+                    font.pixelSize: 12
+                    color: "#fff"
+                    background: Rectangle {
+                        color: Qt.rgba(0, 0, 0, 0.3)
+                        radius: 4
+                        border.width: 1
+                        border.color: renameInput.activeFocus ? "#4a9eff" : Qt.rgba(1, 1, 1, 0.15)
+                    }
+                    
+                    Keys.onReturnPressed: doRename()
+                    Keys.onEscapePressed: renameDialog.visible = false
+                    
+                    function doRename() {
+                        var newName = renameInput.text.trim()
+                        if (newName && selectedFile) {
+                            if (Storage.renameItem(selectedFile.path, newName)) {
+                                renameDialog.visible = false
+                                loadFolder(currentPath)
                             }
                         }
                     }
                 }
                 
-                // Content
-                Item {
-                    width: parent.width
-                    height: parent.height - 36
+                Row {
+                    anchors.right: parent.right
+                    spacing: 8
                     
-                    // Image preview
-                    Image {
-                        id: previewImage
-                        anchors.fill: parent
-                        anchors.margins: 16
-                        fillMode: Image.PreserveAspectFit
-                        visible: previewType === "image"
-                        asynchronous: true
+                    Rectangle {
+                        width: 70; height: 28; radius: 4
+                        color: cancelRenameMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.15) : Qt.rgba(1, 1, 1, 0.08)
+                        Text { anchors.centerIn: parent; text: "Cancel"; font.pixelSize: 11; color: "#fff" }
+                        MouseArea { id: cancelRenameMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: renameDialog.visible = false }
                     }
                     
-                    // Text preview
-                    ScrollView {
-                        anchors.fill: parent
-                        anchors.margins: 16
-                        visible: previewType === "text"
-                        clip: true
-                        
-                        TextArea {
-                            id: previewText
-                            readOnly: true
-                            font.family: "Consolas"
-                            font.pixelSize: 12
-                            color: "#e0e0e0"
-                            background: Rectangle { color: "transparent" }
-                            wrapMode: TextArea.WrapAnywhere
-                        }
+                    Rectangle {
+                        width: 70; height: 28; radius: 4
+                        color: confirmRenameMouse.containsMouse ? Qt.rgba(0.3, 0.5, 0.8, 0.7) : Qt.rgba(0.3, 0.5, 0.8, 0.5)
+                        Text { anchors.centerIn: parent; text: "Rename"; font.pixelSize: 11; color: "#fff" }
+                        MouseArea { id: confirmRenameMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: renameInput.doRename() }
                     }
                 }
             }
-            
-            scale: previewOverlay.visible ? 1.0 : 0.9
-            opacity: previewOverlay.visible ? 1.0 : 0
-            Behavior on scale { NumberAnimation { duration: 150 } }
-            Behavior on opacity { NumberAnimation { duration: 150 } }
         }
     }
 }

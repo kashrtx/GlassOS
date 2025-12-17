@@ -136,10 +136,12 @@ Rectangle {
                 
                 property point clickPos
                 property bool dragging: false
+                property string snapZone: ""
                 
                 onPressed: function(mouse) {
                     clickPos = Qt.point(mouse.x, mouse.y)
                     dragging = false
+                    snapZone = ""
                     glassWindow.z = 100
                     glassWindow.activated()
                 }
@@ -159,30 +161,71 @@ Rectangle {
                             clickPos.x = restoreWidth * centerRatio
                         }
                         
-                        glassWindow.x += mouse.x - clickPos.x
-                        glassWindow.y += mouse.y - clickPos.y
+                        var newX = glassWindow.x + mouse.x - clickPos.x
+                        var newY = glassWindow.y + mouse.y - clickPos.y
                         
-                        // Detect snap zones
-                        var globalX = glassWindow.x + mouse.x
-                        var globalY = glassWindow.y + mouse.y
+                        // Constrain to not go under taskbar or off screen
+                        var maxY = glassWindow.parent.height - 50  // At least 50px visible
+                        newY = Math.min(newY, maxY)
+                        newY = Math.max(newY, -glassWindow.height + 50)  // Keep 50px from top
+                        
+                        glassWindow.x = newX
+                        glassWindow.y = newY
+                        
+                        // Detect snap zones - use cursor position
+                        var cursorX = glassWindow.x + mouse.x
+                        var cursorY = glassWindow.y + mouse.y
                         var parentW = glassWindow.parent.width
+                        var parentH = glassWindow.parent.height
+                        var edgeThreshold = 30
+                        var cornerThreshold = 60
                         
-                        snapPreview.visible = (globalX < 20 || globalX > parentW - 20 || globalY < 10)
+                        // Check corners first (they have priority)
+                        var nearLeft = cursorX < cornerThreshold
+                        var nearRight = cursorX > parentW - cornerThreshold
+                        var nearTop = cursorY < cornerThreshold
+                        var nearBottom = cursorY > parentH - cornerThreshold
+                        
+                        if (nearLeft && nearTop) {
+                            snapZone = "topleft"
+                        } else if (nearRight && nearTop) {
+                            snapZone = "topright"
+                        } else if (nearLeft && nearBottom) {
+                            snapZone = "bottomleft"
+                        } else if (nearRight && nearBottom) {
+                            snapZone = "bottomright"
+                        } else if (cursorX < edgeThreshold) {
+                            snapZone = "left"
+                        } else if (cursorX > parentW - edgeThreshold) {
+                            snapZone = "right"
+                        } else if (cursorY < 10) {
+                            snapZone = "top"
+                        } else {
+                            snapZone = ""
+                        }
+                        
+                        snapPreview.visible = (snapZone !== "")
                     }
                 }
                 
                 onReleased: function(mouse) {
-                    if (dragging) {
-                        var globalX = glassWindow.x + mouse.x
-                        var globalY = glassWindow.y + mouse.y
-                        var parentW = glassWindow.parent.width
-                        
+                    if (dragging && snapZone !== "") {
                         snapPreview.visible = false
                         
-                        if (globalX < 20) snapLeft()
-                        else if (globalX > parentW - 20) snapRight()
-                        else if (globalY < 10) toggleMaximize()
+                        switch(snapZone) {
+                            case "left": snapLeft(); break
+                            case "right": snapRight(); break
+                            case "top": toggleMaximize(); break
+                            case "topleft": snapTopLeft(); break
+                            case "topright": snapTopRight(); break
+                            case "bottomleft": snapBottomLeft(); break
+                            case "bottomright": snapBottomRight(); break
+                        }
+                    } else {
+                        // Ensure window stays in bounds after drag
+                        constrainToBounds()
                     }
+                    snapZone = ""
                 }
                 
                 onDoubleClicked: toggleMaximize()
@@ -558,6 +601,51 @@ Rectangle {
         isMaximized = false
     }
     
+    // Quadrant snapping
+    function snapTopLeft() {
+        saveGeometry()
+        x = 0
+        y = 0
+        width = parent.width / 2
+        height = parent.height / 2
+        isSnappedLeft = true
+        isSnappedRight = false
+        isMaximized = false
+    }
+    
+    function snapTopRight() {
+        saveGeometry()
+        x = parent.width / 2
+        y = 0
+        width = parent.width / 2
+        height = parent.height / 2
+        isSnappedRight = true
+        isSnappedLeft = false
+        isMaximized = false
+    }
+    
+    function snapBottomLeft() {
+        saveGeometry()
+        x = 0
+        y = parent.height / 2
+        width = parent.width / 2
+        height = parent.height / 2
+        isSnappedLeft = true
+        isSnappedRight = false
+        isMaximized = false
+    }
+    
+    function snapBottomRight() {
+        saveGeometry()
+        x = parent.width / 2
+        y = parent.height / 2
+        width = parent.width / 2
+        height = parent.height / 2
+        isSnappedRight = true
+        isSnappedLeft = false
+        isMaximized = false
+    }
+    
     function restoreWindow() {
         x = restoreX
         y = restoreY
@@ -577,9 +665,26 @@ Rectangle {
         }
     }
     
-    // Opening animation
+    function constrainToBounds() {
+        if (!parent) return
+        
+        // Keep at least 50px visible from top and sides
+        if (x < -width + 50) x = -width + 50
+        if (x > parent.width - 50) x = parent.width - 50
+        if (y < 0) y = 0
+        if (y > parent.height - 50) y = parent.height - 50
+    }
+    
+    function bringToFront() {
+        z = 100
+        activated()
+    }
+    
+    // Opening animation - new windows always on top
     Component.onCompleted: {
+        z = 100  // Always on top when opened
         openAnim.start()
+        constrainToBounds()
     }
     
     ParallelAnimation {

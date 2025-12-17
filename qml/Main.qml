@@ -116,6 +116,128 @@ ApplicationWindow {
         z: 10
     }
     
+    // ===== AERO WARNING DIALOG =====
+    Rectangle {
+        id: errorDialog
+        anchors.fill: parent
+        color: Qt.rgba(0, 0, 0, 0.7)
+        visible: false
+        z: 9999
+        
+        property string errorTitle: "System Alert"
+        property string errorMessage: "An error has occurred."
+        
+        MouseArea { anchors.fill: parent; onClicked: {} }
+        
+        Rectangle {
+            anchors.centerIn: parent
+            width: 450
+            height: 200
+            radius: 10
+            
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: "#2a3040" }
+                GradientStop { position: 1.0; color: "#1a2030" }
+            }
+            
+            border.width: 2
+            border.color: "#e04343"
+            
+            Column {
+                anchors.fill: parent
+                anchors.margins: 20
+                spacing: 14
+                
+                Row {
+                    spacing: 12
+                    
+                    Text {
+                        text: "⚠️"
+                        font.pixelSize: 32
+                    }
+                    
+                    Column {
+                        spacing: 4
+                        
+                        Text {
+                            text: errorDialog.errorTitle
+                            font.pixelSize: 16
+                            font.bold: true
+                            color: "#ffffff"
+                        }
+                        
+                        Text {
+                            text: "GlassOS has encountered an issue"
+                            font.pixelSize: 11
+                            color: "#aaaaaa"
+                        }
+                    }
+                }
+                
+                Rectangle {
+                    width: parent.width
+                    height: 70
+                    radius: 5
+                    color: Qt.rgba(0, 0, 0, 0.3)
+                    
+                    ScrollView {
+                        anchors.fill: parent
+                        anchors.margins: 8
+                        
+                        Text {
+                            text: errorDialog.errorMessage
+                            font.pixelSize: 11
+                            color: "#cccccc"
+                            wrapMode: Text.Wrap
+                            width: 400
+                        }
+                    }
+                }
+                
+                Row {
+                    anchors.right: parent.right
+                    spacing: 10
+                    
+                    Rectangle {
+                        width: 100
+                        height: 32
+                        radius: 4
+                        color: dismissMouse.containsMouse ? Qt.rgba(0.3, 0.5, 0.8, 0.6) : Qt.rgba(0.3, 0.5, 0.8, 0.4)
+                        
+                        Text {
+                            anchors.centerIn: parent
+                            text: "Dismiss"
+                            font.pixelSize: 12
+                            color: "#ffffff"
+                        }
+                        
+                        MouseArea {
+                            id: dismissMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: errorDialog.visible = false
+                        }
+                    }
+                }
+            }
+            
+            scale: errorDialog.visible ? 1.0 : 0.9
+            Behavior on scale { NumberAnimation { duration: 100 } }
+        }
+    }
+    
+    // Connect to Sentinel error signal
+    Connections {
+        target: typeof Sentinel !== 'undefined' ? Sentinel : null
+        
+        function onErrorOccurred(title, message) {
+            errorDialog.errorTitle = title
+            errorDialog.errorMessage = message
+            errorDialog.visible = true
+        }
+    }
+    
     // Start Menu
     StartMenu {
         id: startMenu
@@ -325,6 +447,9 @@ ApplicationWindow {
                 onSetAsWallpaper: function(path) {
                     root.setWallpaper(path)
                 }
+                onOpenFileRequest: function(path, name, isImage, isText) {
+                    root.openFile(path, name, isImage, isText)
+                }
             }
         }
     }
@@ -383,6 +508,96 @@ ApplicationWindow {
             }
         }
     }
+    
+    // Image Viewer Component
+    Component {
+        id: imageViewerComponent
+        GlassWindow {
+            property string imagePath: ""
+            property string imageName: ""
+            
+            ImageViewer { 
+                id: viewer
+                anchors.fill: parent
+                onSetAsWallpaper: function(path) {
+                    root.setWallpaper(path)
+                }
+            }
+            
+            Component.onCompleted: {
+                if (imagePath && imageName) {
+                    viewer.loadImage(imagePath, imageName)
+                }
+            }
+        }
+    }
+    
+    // Text Editor Component (using Notepad for editing)
+    Component {
+        id: textViewerComponent
+        GlassWindow {
+            property string filePath: ""
+            property string fileName: ""
+            
+            Notepad { 
+                id: notepadEditor
+                anchors.fill: parent
+            }
+            
+            Component.onCompleted: {
+                if (filePath && fileName) {
+                    notepadEditor.loadFile(filePath, fileName)
+                }
+            }
+        }
+    }
+    
+    // Open file in appropriate viewer
+    function openFile(path, name, isImage, isText) {
+        var xPos = 100 + (windowCounter % 5) * 30
+        var yPos = 60 + (windowCounter % 5) * 25
+        var win = null
+        
+        try {
+            if (isImage) {
+                win = imageViewerComponent.createObject(windowContainer, {
+                    x: xPos, y: yPos,
+                    windowTitle: name,
+                    windowIcon: "🖼",
+                    width: 700, height: 500,
+                    imagePath: path,
+                    imageName: name
+                })
+            } else if (isText) {
+                win = textViewerComponent.createObject(windowContainer, {
+                    x: xPos, y: yPos,
+                    windowTitle: name,
+                    windowIcon: "📄",
+                    width: 650, height: 450,
+                    filePath: path,
+                    fileName: name
+                })
+            }
+            
+            if (win) {
+                win.closeRequested.connect(function() { 
+                    closeWindow(win)
+                })
+                win.activated.connect(function() {
+                    for (var i = 0; i < openWindows.length; i++) {
+                        if (openWindows[i]) openWindows[i].z = 10
+                    }
+                    win.z = 100
+                })
+                openWindows.push(win)
+                windowCounter++
+                updateTaskbar()
+            }
+        } catch (e) {
+            showError("Error", "Could not open file: " + e.message)
+        }
+    }
+
     
     // Error dialog
     function showError(title, message) {

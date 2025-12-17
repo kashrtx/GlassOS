@@ -1,4 +1,4 @@
-// GlassOS Taskbar - With Running Apps Display
+// GlassOS Taskbar - Fixed & Stable
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -11,10 +11,38 @@ Rectangle {
     signal taskbarAppClicked(var window)
     signal taskbarAppClosed(var window)
     
-    // List of running windows
     property var runningWindows: []
+    property int volumeLevel: Storage.systemVolume // Bind to system volume
     
-    // Premium dark glass effect
+    // Group windows logic
+    function getGroupedApps() {
+        var groups = {}
+        for (var i = 0; i < runningWindows.length; i++) {
+            var win = runningWindows[i]
+            if (!win) continue
+            var title = win.windowTitle || "Window"
+            var key = win.windowIcon || title
+            if (!groups[key]) {
+                groups[key] = {
+                    title: title,
+                    icon: win.windowIcon || "🪟",
+                    windows: []
+                }
+            }
+            groups[key].windows.push(win)
+        }
+        var result = []
+        for (var k in groups) {
+            result.push(groups[k])
+        }
+        return result
+    }
+    
+    property var groupedApps: getGroupedApps()
+    
+    onRunningWindowsChanged: groupedApps = getGroupedApps()
+    
+    // Premium dark glass background
     gradient: Gradient {
         GradientStop { position: 0.0; color: Qt.rgba(0.12, 0.14, 0.20, 0.95) }
         GradientStop { position: 0.3; color: Qt.rgba(0.08, 0.10, 0.15, 0.95) }
@@ -27,27 +55,11 @@ Rectangle {
         anchors.right: parent.right
         anchors.top: parent.top
         height: 1
-        
         gradient: Gradient {
             orientation: Gradient.Horizontal
             GradientStop { position: 0.0; color: Qt.rgba(0.4, 0.6, 0.9, 0.1) }
-            GradientStop { position: 0.3; color: Qt.rgba(0.4, 0.6, 0.9, 0.5) }
             GradientStop { position: 0.5; color: Qt.rgba(0.5, 0.7, 1.0, 0.7) }
-            GradientStop { position: 0.7; color: Qt.rgba(0.4, 0.6, 0.9, 0.5) }
             GradientStop { position: 1.0; color: Qt.rgba(0.4, 0.6, 0.9, 0.1) }
-        }
-    }
-    
-    // Glass shine
-    Rectangle {
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.top: parent.top
-        height: parent.height * 0.4
-        
-        gradient: Gradient {
-            GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0.08) }
-            GradientStop { position: 1.0; color: "transparent" }
         }
     }
     
@@ -59,352 +71,337 @@ Rectangle {
         
         // Start button
         Rectangle {
-            id: startBtn
             Layout.preferredWidth: 48
             Layout.preferredHeight: 40
             Layout.alignment: Qt.AlignVCenter
             radius: 6
+            color: "transparent" // handled by inner/gradient
             
             gradient: Gradient {
-                GradientStop { 
-                    position: 0.0
-                    color: startMouse.containsMouse ? Qt.rgba(0.3, 0.5, 0.8, 0.6) : Qt.rgba(0.2, 0.4, 0.7, 0.4)
-                }
-                GradientStop { 
-                    position: 1.0
-                    color: startMouse.containsMouse ? Qt.rgba(0.2, 0.4, 0.7, 0.6) : Qt.rgba(0.15, 0.3, 0.6, 0.4)
-                }
+                GradientStop { position: 0.0; color: startMouse.containsMouse ? Qt.rgba(0.3, 0.5, 0.8, 0.6) : Qt.rgba(0.2, 0.4, 0.7, 0.4) }
+                GradientStop { position: 1.0; color: startMouse.containsMouse ? Qt.rgba(0.2, 0.4, 0.7, 0.6) : Qt.rgba(0.15, 0.3, 0.6, 0.4) }
             }
-            
             border.width: 1
             border.color: startMouse.containsMouse ? Qt.rgba(0.5, 0.7, 1.0, 0.6) : Qt.rgba(0.4, 0.6, 0.9, 0.3)
-            Behavior on border.color { ColorAnimation { duration: 150 } }
             
-            Grid {
+            Text {
                 anchors.centerIn: parent
-                columns: 2
-                spacing: 2
-                
-                Repeater {
-                    model: 4
-                    Rectangle {
-                        width: 8
-                        height: 8
-                        radius: 1
-                        color: startMouse.containsMouse ? "#ffffff" : "#e0e0e0"
-                        Behavior on color { ColorAnimation { duration: 150 } }
-                    }
-                }
+                text: "⊞"
+                font.pixelSize: 22
+                font.bold: true
+                color: "#ffffff"
             }
             
             MouseArea {
                 id: startMouse
                 anchors.fill: parent
                 hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
                 onClicked: taskbar.startClicked()
             }
-            
-            scale: startMouse.pressed ? 0.95 : 1.0
-            Behavior on scale { NumberAnimation { duration: 50 } }
         }
         
         // Separator
         Rectangle {
-            Layout.preferredWidth: 1
-            Layout.preferredHeight: 28
-            Layout.leftMargin: 8
-            Layout.rightMargin: 8
+            Layout.preferredWidth: 1; Layout.preferredHeight: 32; Layout.margins: 8
             color: Qt.rgba(1, 1, 1, 0.15)
         }
         
-        // Quick launch
+        // Pinned apps
         Row {
             Layout.preferredHeight: parent.height
             spacing: 4
-            
-            TaskbarButton { 
-                icon: "🌐"
-                label: "Browser"
-                onClicked: taskbar.appClicked("AeroBrowser")
-            }
-            TaskbarButton { 
-                icon: "📁"
-                label: "Files"
-                onClicked: taskbar.appClicked("AeroExplorer")
-            }
-            TaskbarButton { 
-                icon: "📝"
-                label: "Notes"
-                onClicked: taskbar.appClicked("GlassPad")
-            }
-        }
-        
-        // Separator
-        Rectangle {
-            Layout.preferredWidth: 1
-            Layout.preferredHeight: 28
-            Layout.leftMargin: 8
-            Layout.rightMargin: 4
-            color: Qt.rgba(1, 1, 1, 0.15)
-        }
-        
-        // ===== RUNNING APPS =====
-        Row {
-            id: runningAppsRow
-            Layout.fillWidth: true
-            Layout.preferredHeight: parent.height
-            Layout.leftMargin: 4
-            spacing: 4
-            
             Repeater {
-                model: runningWindows
-                
+                model: [
+                    { name: "AeroExplorer", icon: "📁", tooltip: "Explorer" },
+                    { name: "AeroBrowser", icon: "🌐", tooltip: "Browser" },
+                    { name: "GlassPad", icon: "📝", tooltip: "GlassPad" }
+                ]
                 Rectangle {
-                    width: 160
-                    height: 38
+                    width: 42; height: 38
                     anchors.verticalCenter: parent.verticalCenter
                     radius: 5
-                    
-                    // Active window indicator
-                    gradient: Gradient {
-                        GradientStop { 
-                            position: 0.0
-                            color: modelData.visible ? Qt.rgba(0.3, 0.5, 0.8, 0.4) : 
-                                   (rwMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.15) : Qt.rgba(1, 1, 1, 0.05))
-                        }
-                        GradientStop { 
-                            position: 1.0
-                            color: modelData.visible ? Qt.rgba(0.2, 0.4, 0.7, 0.3) : 
-                                   (rwMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.08) : "transparent")
-                        }
-                    }
-                    
-                    border.width: modelData.visible ? 1 : 0
-                    border.color: Qt.rgba(0.4, 0.6, 0.9, 0.4)
-                    
-                    // Bottom indicator line for visible windows
-                    Rectangle {
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.bottom: parent.bottom
-                        anchors.leftMargin: 4
-                        anchors.rightMargin: 4
-                        height: 2
-                        radius: 1
-                        color: modelData.visible ? "#4a9eff" : Qt.rgba(1, 1, 1, 0.2)
-                    }
-                    
-                    Row {
-                        anchors.fill: parent
-                        anchors.leftMargin: 8
-                        anchors.rightMargin: 4
-                        spacing: 8
-                        
-                        Text {
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: modelData.windowIcon || "🪟"
-                            font.pixelSize: 16
-                        }
-                        
-                        Text {
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: parent.width - 60
-                            text: modelData.windowTitle || "Window"
-                            font.pixelSize: 11
-                            font.family: "Segoe UI"
-                            color: "#ffffff"
-                            elide: Text.ElideRight
-                        }
-                        
-                        // Close button
-                        Rectangle {
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 20
-                            height: 20
-                            radius: 10
-                            color: closeWinMouse.containsMouse ? "#e04343" : "transparent"
-                            visible: rwMouse.containsMouse
-                            
-                            Text {
-                                anchors.centerIn: parent
-                                text: "✕"
-                                font.pixelSize: 9
-                                color: "#ffffff"
-                            }
-                            
-                            MouseArea {
-                                id: closeWinMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                onClicked: taskbar.taskbarAppClosed(modelData)
-                            }
-                        }
-                    }
-                    
+                    color: pMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.15) : "transparent"
+                    Text { anchors.centerIn: parent; text: modelData.icon; font.pixelSize: 20 }
                     MouseArea {
-                        id: rwMouse
-                        anchors.fill: parent
-                        anchors.rightMargin: 24
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            // Toggle behavior like Windows
-                            if (modelData.visible && !modelData.isMinimized) {
-                                // Window is visible and not minimized - minimize it
-                                modelData.minimizeWindow()
-                            } else {
-                                // Window is hidden/minimized - restore it
-                                modelData.visible = true
-                                modelData.z = 100
-                                if (modelData.isMinimized) {
-                                    modelData.restoreFromMinimize()
-                                }
-                                taskbar.taskbarAppClicked(modelData)
-                            }
-                        }
+                        id: pMouse; anchors.fill: parent; hoverEnabled: true
+                        onClicked: taskbar.appClicked(modelData.name)
                     }
-                    
-                    scale: rwMouse.pressed ? 0.98 : 1.0
-                    Behavior on scale { NumberAnimation { duration: 50 } }
+                    ToolTip.visible: pMouse.containsMouse
+                    ToolTip.text: modelData.tooltip
+                    ToolTip.delay: 500
                 }
             }
         }
         
-        // System tray
-        Row {
+        // Separator
+        Rectangle {
+            Layout.preferredWidth: 1; Layout.preferredHeight: 32; Layout.margins: 8
+            color: Qt.rgba(1, 1, 1, 0.15)
+        }
+        
+        // Running apps list (ListView for proper overflow handling)
+        ListView {
+            id: runningList
+            Layout.fillWidth: true
             Layout.preferredHeight: parent.height
+            orientation: ListView.Horizontal
             spacing: 4
+            clip: true
+            model: groupedApps
             
-            Rectangle {
-                width: 80
-                height: 36
+            delegate: Rectangle {
+                id: appGroupItem
+                property bool hasMultiple: modelData.windows.length > 1
+                // Fixed width for consistency - no shrinking
+                width: 160 
+                height: 40
                 anchors.verticalCenter: parent.verticalCenter
-                radius: 4
-                color: trayMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.08) : "transparent"
+                radius: 5
+                
+                property bool isActive: {
+                    for(var i=0; i<modelData.windows.length; i++) {
+                        if(modelData.windows[i].visible && !modelData.windows[i].isMinimized) return true
+                    }
+                    return false
+                }
+                
+                property bool hovered: groupMouse.containsMouse || (previewPopupLoader.item && previewPopupLoader.item.containsMouse)
+                
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: isActive ? Qt.rgba(0.3, 0.5, 0.8, 0.5) : (hovered ? Qt.rgba(1,1,1,0.15) : Qt.rgba(1,1,1,0.05)) }
+                    GradientStop { position: 1.0; color: isActive ? Qt.rgba(0.2, 0.4, 0.7, 0.4) : (hovered ? Qt.rgba(1,1,1,0.1) : "transparent") }
+                }
+                
+                border.width: isActive ? 1 : 0
+                border.color: Qt.rgba(0.4, 0.6, 0.9, 0.5)
+                
+                // Bottom indicator
+                Rectangle {
+                    anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
+                    anchors.margins: 4; height: 2; radius: 1
+                    color: isActive ? "#4a9eff" : (modelData.windows.length > 0 ? Qt.rgba(1,1,1,0.3) : "transparent")
+                }
                 
                 Row {
-                    anchors.centerIn: parent
-                    spacing: 10
-                    
-                    Text { text: "📶"; font.pixelSize: 14; opacity: 0.9 }
-                    Text { text: "🔊"; font.pixelSize: 14; opacity: 0.9 }
-                    Text { text: "🔋"; font.pixelSize: 14; opacity: 0.9 }
+                    anchors.fill: parent; anchors.leftMargin: 8; anchors.rightMargin: 8; spacing: 8
+                    Text { anchors.verticalCenter: parent.verticalCenter; text: modelData.icon; font.pixelSize: 18 }
+                    Text { 
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: parent.width - 40
+                        text: modelData.title
+                        color: "#ffffff"
+                        font.pixelSize: 12
+                        elide: Text.ElideRight
+                    }
+                }
+                
+                // Badge
+                Rectangle {
+                    visible: hasMultiple
+                    anchors.top: parent.top; anchors.right: parent.right; anchors.margins: 2
+                    width: 16; height: 14; radius: 7; color: "#4a9eff"
+                    Text { anchors.centerIn: parent; text: modelData.windows.length; color: "#fff"; font.pixelSize: 9; font.bold: true }
                 }
                 
                 MouseArea {
-                    id: trayMouse
+                    id: groupMouse
                     anchors.fill: parent
                     hoverEnabled: true
+                    onClicked: {
+                        if (!hasMultiple) {
+                            var win = modelData.windows[0]
+                            if(win.visible && !win.isMinimized) win.minimizeWindow()
+                            else { win.visible=true; win.z=100; if(win.isMinimized) win.restoreFromMinimize(); taskbar.taskbarAppClicked(win) }
+                        }
+                    }
+                }
+                
+                // Logic to show preview
+                Timer {
+                    id: showTimer
+                    interval: 400
+                    running: groupMouse.containsMouse && !previewPopup.opened
+                    onTriggered: previewPopup.open()
+                }
+                
+                Popup {
+                    id: previewPopup
+                    y: -height - 10
+                    x: (parent.width - width) / 2
+                    width: hasMultiple ? Math.min(600, modelData.windows.length * 200) : 200
+                    height: 150
+                    padding: 0
+                    modal: false
+                    focus: true
+                    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                    
+                    background: Rectangle {
+                        color: Qt.rgba(0.1, 0.12, 0.18, 0.95)
+                        radius: 8
+                        border.width: 1
+                        border.color: "#4a9eff"
+                    }
+                    
+                    contentItem: Rectangle {
+                        color: "transparent"
+                        
+                        MouseArea {
+                            id: popupMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                        }
+                        
+                        // Auto-hide logic
+                        Timer {
+                            interval: 200
+                            running: true
+                            repeat: true
+                            onTriggered: {
+                                if (!groupMouse.containsMouse && !popupMouse.containsMouse) {
+                                    previewPopup.close()
+                                }
+                            }
+                        }
+                        
+                        // Content
+                        ListView {
+                            anchors.fill: parent
+                            anchors.margins: 8
+                            orientation: ListView.Horizontal
+                            spacing: 8
+                            model: modelData.windows
+                            delegate: Rectangle {
+                                width: 180; height: parent.height
+                                color: Qt.rgba(1,1,1,0.05)
+                                radius: 4
+                                
+                                Column {
+                                    anchors.fill: parent; anchors.margins: 4; spacing: 4
+                                    Row {
+                                        width: parent.width; spacing: 4
+                                        Text { text: modelData.windowIcon; font.pixelSize: 12 }
+                                        Text { width: parent.width - 30; text: modelData.windowTitle; color: "#fff"; font.pixelSize: 11; elide: Text.ElideRight }
+                                        Text { text: "✕"; color: "#ff5555"; font.bold: true; MouseArea { anchors.fill: parent; onClicked: taskbar.taskbarAppClosed(modelData) } }
+                                    }
+                                    
+                                    // Live preview if not minimized
+                                    ShaderEffectSource {
+                                        width: parent.width; height: parent.height - 24
+                                        sourceItem: modelData.visible && !modelData.isMinimized ? modelData : null
+                                        live: true
+                                        visible: sourceItem !== null
+                                        
+                                        Rectangle {
+                                            anchors.fill: parent
+                                            color: "black"
+                                            visible: modelData.isMinimized
+                                            Text { anchors.centerIn: parent; text: "Minimized"; color: "gray" }
+                                        }
+                                    }
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onClicked: {
+                                        modelData.visible = true; modelData.z = 100
+                                        if(modelData.isMinimized) modelData.restoreFromMinimize()
+                                        taskbar.taskbarAppClicked(modelData)
+                                        previewPopup.close()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // System Tray
+        Row {
+            Layout.alignment: Qt.AlignRight
+            Layout.rightMargin: 10
+            spacing: 8
+            
+            // Network
+            Item {
+                width: 32; height: 40
+                Text { anchors.centerIn: parent; text: "📶"; font.pixelSize: 16; color: "#fff" }
+                MouseArea { anchors.fill: parent; hoverEnabled: true; ToolTip.visible: containsMouse; ToolTip.text: "Network: Connected" }
+            }
+            
+            // Volume
+            Item {
+                width: 32; height: 40
+                Text { anchors.centerIn: parent; text: volumeLevel > 0 ? "🔊" : "🔇"; font.pixelSize: 16; color: "#fff" }
+                MouseArea {
+                    id: volMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onClicked: volPopup.opened ? volPopup.close() : volPopup.open()
+                }
+                
+                Popup {
+                    id: volPopup
+                    y: -height - 10
+                    x: -width/2 + parent.width/2
+                    width: 40
+                    height: 120
+                    modal: false
+                    focus: true
+                    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                    
+                    background: Rectangle {
+                        color: Qt.rgba(0.1, 0.12, 0.18, 0.95); radius: 6
+                        border.width: 1; border.color: "#4a9eff"
+                    }
+                    
+                    Column {
+                        anchors.centerIn: parent
+                        spacing: 10
+                        Slider {
+                            id: volSlider
+                            orientation: Qt.Vertical
+                            from: 0; to: 100
+                            value: volumeLevel
+                            height: 80
+                            onMoved: Storage.setSystemVolume(value)
+                        }
+                        Text { text: Math.round(volumeLevel); color: "#fff"; font.pixelSize: 10 }
+                    }
                 }
             }
             
+            // Clock
             Rectangle {
-                width: 1
-                height: 28
-                anchors.verticalCenter: parent.verticalCenter
-                color: Qt.rgba(1, 1, 1, 0.15)
-            }
-            
-            Rectangle {
-                width: 90
-                height: 36
-                anchors.verticalCenter: parent.verticalCenter
-                radius: 4
-                color: clockMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.08) : "transparent"
-                
+                width: 70; height: 40
+                color: "transparent"
                 Column {
                     anchors.centerIn: parent
-                    spacing: -1
-                    
-                    Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        text: System.currentTime
-                        font.pixelSize: 13
-                        font.family: "Segoe UI"
-                        font.weight: Font.Medium
-                        color: "#ffffff"
+                    Text { 
+                        text: Qt.formatTime(new Date(), "h:mm AP")
+                        color: "#fff"; font.pixelSize: 12
                     }
-                    
-                    Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        text: System.shortDate
-                        font.pixelSize: 11
-                        font.family: "Segoe UI"
-                        color: "#aaaaaa"
+                    Text { 
+                        text: Qt.formatDate(new Date(), "M/d/yyyy")
+                        color: "#ccc"; font.pixelSize: 10
                     }
                 }
-                
-                MouseArea {
-                    id: clockMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                }
-                
-                ToolTip.visible: clockMouse.containsMouse
-                ToolTip.text: System.currentDate
-                ToolTip.delay: 300
+                Timer { interval: 1000; running: true; repeat: true; onTriggered: parent.children[0].children[0].text = Qt.formatTime(new Date(), "h:mm AP") }
             }
             
+            // Show Desktop
             Rectangle {
-                width: 8
-                height: parent.height
-                color: sdMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.15) : "transparent"
-                Behavior on color { ColorAnimation { duration: 100 } }
-                
+                width: 6; height: 40
+                color: showDesktopMouse.containsMouse ? Qt.rgba(1,1,1,0.3) : "transparent"
                 MouseArea {
-                    id: sdMouse
+                    id: showDesktopMouse
                     anchors.fill: parent
                     hoverEnabled: true
+                    onClicked: {
+                         for(var i=0; i<runningWindows.length; i++) if(runningWindows[i]) runningWindows[i].minimizeWindow()
+                    }
+                    ToolTip.visible: containsMouse; ToolTip.text: "Show Desktop"
                 }
             }
         }
-    }
-    
-    component TaskbarButton: Rectangle {
-        property string icon: ""
-        property string label: ""
-        signal clicked()
-        
-        width: 44
-        height: 38
-        anchors.verticalCenter: parent.verticalCenter
-        radius: 5
-        
-        gradient: Gradient {
-            GradientStop { 
-                position: 0.0
-                color: tbMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.15) : "transparent"
-            }
-            GradientStop { 
-                position: 1.0
-                color: tbMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.08) : "transparent"
-            }
-        }
-        
-        border.width: tbMouse.containsMouse ? 1 : 0
-        border.color: Qt.rgba(1, 1, 1, 0.2)
-        Behavior on border.width { NumberAnimation { duration: 100 } }
-        
-        Text {
-            anchors.centerIn: parent
-            text: icon
-            font.pixelSize: 20
-        }
-        
-        MouseArea {
-            id: tbMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: parent.clicked()
-        }
-        
-        ToolTip.visible: tbMouse.containsMouse
-        ToolTip.text: label
-        ToolTip.delay: 400
-        
-        scale: tbMouse.pressed ? 0.95 : 1.0
-        Behavior on scale { NumberAnimation { duration: 50 } }
     }
 }

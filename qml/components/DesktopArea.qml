@@ -1,4 +1,4 @@
-// GlassOS Desktop Area - Clean version
+// GlassOS Desktop Area - Consistent Context Menu Style
 import QtQuick
 
 Item {
@@ -48,7 +48,6 @@ Item {
             model: icons
             
             Rectangle {
-                id: iconItem
                 width: 72
                 height: 76
                 radius: 4
@@ -84,9 +83,7 @@ Item {
                             anchors.centerIn: parent
                             text: modelData.name
                             font.pixelSize: 11
-                            font.family: "Segoe UI"
                             color: "#ffffff"
-                            
                             style: Text.Outline
                             styleColor: Qt.rgba(0, 0, 0, 0.5)
                         }
@@ -121,7 +118,7 @@ Item {
         onClicked: showContextMenu = false
     }
     
-    // Context menu
+    // Context menu - matching Explorer style
     Rectangle {
         id: contextMenu
         x: Math.min(menuX, desktopArea.width - width - 10)
@@ -131,18 +128,22 @@ Item {
         visible: showContextMenu
         z: 100
         radius: 6
-        color: Qt.rgba(0.12, 0.15, 0.22, 0.95)
-        border.width: 1
-        border.color: Qt.rgba(1, 1, 1, 0.2)
         
-        // Glass effect
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: Qt.rgba(0.18, 0.20, 0.25, 0.98) }
+            GradientStop { position: 1.0; color: Qt.rgba(0.12, 0.14, 0.18, 0.98) }
+        }
+        
+        border.width: 1
+        border.color: Qt.rgba(0.4, 0.6, 0.9, 0.4)
+        
+        // Shadow
         Rectangle {
             anchors.fill: parent
-            radius: parent.radius
-            gradient: Gradient {
-                GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0.1) }
-                GradientStop { position: 1.0; color: "transparent" }
-            }
+            anchors.margins: -4
+            radius: 10
+            color: Qt.rgba(0, 0, 0, 0.5)
+            z: -1
         }
         
         Column {
@@ -153,28 +154,37 @@ Item {
             anchors.margins: 6
             spacing: 2
             
-            ContextItem { text: "View"; icon: "👁"; hasArrow: true }
-            ContextItem { text: "Sort by"; icon: "📊"; hasArrow: true }
-            ContextItem { text: "Refresh"; icon: "🔄"; onClicked: { showContextMenu = false } }
+            ContextMenuItem { text: "View"; icon: "👁"; hasArrow: true }
+            ContextMenuItem { text: "Sort by"; icon: "📊"; hasArrow: true }
+            ContextMenuItem { 
+                text: "Refresh"; icon: "🔄"
+                onItemClicked: { showContextMenu = false } 
+            }
             
-            Rectangle { width: parent.width; height: 1; color: Qt.rgba(1,1,1,0.1) }
+            Rectangle { width: parent.width; height: 1; color: Qt.rgba(1,1,1,0.15) }
             
-            ContextItem { text: "New folder"; icon: "📁"; onClicked: { showContextMenu = false } }
-            ContextItem { text: "New document"; icon: "📄"; onClicked: { showContextMenu = false } }
+            ContextMenuItem { 
+                text: "New Folder"; icon: "📁"
+                onItemClicked: { showContextMenu = false } 
+            }
+            ContextMenuItem { 
+                text: "New Text File"; icon: "📄"
+                onItemClicked: { showContextMenu = false } 
+            }
             
-            Rectangle { width: parent.width; height: 1; color: Qt.rgba(1,1,1,0.1) }
+            Rectangle { width: parent.width; height: 1; color: Qt.rgba(1,1,1,0.15) }
             
-            ContextItem { 
-                text: "Display settings"; icon: "🖥"
-                onClicked: { 
+            ContextMenuItem { 
+                text: "Display Settings"; icon: "🖥"
+                onItemClicked: { 
                     desktopArea.openApp("Settings")
                     showContextMenu = false 
                 }
             }
             
-            ContextItem { 
+            ContextMenuItem { 
                 text: "Personalize"; icon: "🎨"
-                onClicked: { 
+                onItemClicked: { 
                     desktopArea.openApp("Settings")
                     showContextMenu = false 
                 }
@@ -187,21 +197,23 @@ Item {
         Behavior on opacity { NumberAnimation { duration: 80 } }
     }
     
-    // Context menu item component
-    component ContextItem: Rectangle {
+    // Context menu item component - matching Explorer style
+    component ContextMenuItem: Rectangle {
         property string text: ""
         property string icon: ""
         property bool hasArrow: false
-        signal clicked()
+        property bool enabled: true
+        signal itemClicked()
         
         width: parent.width
-        height: 26
-        radius: 3
-        color: ciMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.12) : "transparent"
+        height: 28
+        radius: 4
+        color: ciMouse.containsMouse ? Qt.rgba(0.3, 0.5, 0.8, 0.4) : "transparent"
+        opacity: enabled ? 1.0 : 0.4
         
         Row {
             anchors.fill: parent
-            anchors.leftMargin: 8
+            anchors.leftMargin: 10
             spacing: 8
             
             Text {
@@ -220,7 +232,7 @@ Item {
         
         Text {
             anchors.right: parent.right
-            anchors.rightMargin: 8
+            anchors.rightMargin: 10
             anchors.verticalCenter: parent.verticalCenter
             text: "▶"
             font.pixelSize: 8
@@ -232,7 +244,10 @@ Item {
             id: ciMouse
             anchors.fill: parent
             hoverEnabled: true
-            onClicked: parent.clicked()
+            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: {
+                if (enabled) parent.itemClicked()
+            }
         }
     }
 }

@@ -36,3 +36,5 @@ dist/
 
 # Local config overrides
 config.local.json
+/Storage/User/Documents
+/Storage/User/Downloads

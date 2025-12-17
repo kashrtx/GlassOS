@@ -199,12 +199,17 @@ class StorageProvider(QObject):
     """Provides real file system access to the Storage/User directory."""
     
     wallpaperChanged = Signal()
+    volumeChanged = Signal()
     
     def __init__(self, storage_root: Path, parent=None):
         super().__init__(parent)
         self._storage_root = storage_root
         self._current_wallpaper = ""
-        self._settings_file = storage_root / ".glassos_settings.json"
+        self._system_volume = 75
+        self._settings_dir = storage_root / "Settings"
+        self._settings_dir = storage_root / "Settings"
+        self._settings_dir.mkdir(parents=True, exist_ok=True)
+        self._settings_file = self._settings_dir / "wallpaper.json"
         self._ensure_directories()
         self._load_settings()
     
@@ -212,7 +217,7 @@ class StorageProvider(QObject):
         """Ensure required directories exist."""
         dirs = [
             "Documents", "Pictures", "Pictures/Wallpapers", 
-            "Downloads", "Videos", "Apps"
+            "Downloads", "Videos", "Apps", "Settings"
         ]
         for d in dirs:
             (self._storage_root / d).mkdir(parents=True, exist_ok=True)
@@ -224,10 +229,19 @@ class StorageProvider(QObject):
                 import json
                 with open(self._settings_file, "r") as f:
                     data = json.load(f)
+                self._system_volume = data.get("volume", 75)
                 saved_wp = data.get("wallpaper", "")
-                if saved_wp and Path(saved_wp).exists():
-                    self._current_wallpaper = saved_wp
-                    print(f"🖼️ Loaded saved wallpaper: {saved_wp}")
+                if saved_wp:
+                    # Handle both absolute and relative paths
+                    if Path(saved_wp).exists():
+                        self._current_wallpaper = str(Path(saved_wp)).replace("\\", "/")
+                    else:
+                        # Try as relative path
+                        real_path = self._storage_root / saved_wp.lstrip("/")
+                        if real_path.exists():
+                            self._current_wallpaper = str(real_path).replace("\\", "/")
+                    if self._current_wallpaper:
+                        print(f"🖼️ Loaded wallpaper: {self._current_wallpaper}")
         except Exception as e:
             print(f"⚠️ Could not load settings: {e}")
     
@@ -236,7 +250,8 @@ class StorageProvider(QObject):
         try:
             import json
             data = {
-                "wallpaper": self._current_wallpaper
+                "wallpaper": self._current_wallpaper,
+                "volume": self._system_volume
             }
             with open(self._settings_file, "w") as f:
                 json.dump(data, f, indent=2)
@@ -245,7 +260,6 @@ class StorageProvider(QObject):
     
     def _get_real_path(self, vfs_path: str) -> Path:
         """Convert VFS path to real storage path."""
-        # Remove leading slash and normalize
         clean_path = vfs_path.lstrip("/").replace("\\", "/")
         return self._storage_root / clean_path
     
@@ -274,9 +288,37 @@ class StorageProvider(QObject):
     @Slot(result=str)
     def getWallpaperUrl(self):
         """Get the wallpaper as a file URL for QML."""
-        if self._current_wallpaper and Path(self._current_wallpaper).exists():
-            return "file:///" + self._current_wallpaper
+        if self._current_wallpaper:
+            wp_path = Path(self._current_wallpaper)
+            if wp_path.exists():
+                return "file:///" + str(wp_path).replace("\\", "/")
         return ""
+    
+    @Slot(result=str)
+    def getWallpaperPath(self):
+        """Get the raw wallpaper path for comparison."""
+        return self._current_wallpaper
+
+    @Slot(int)
+    def setSystemVolume(self, volume: int):
+        self._system_volume = max(0, min(100, volume))
+        self._save_settings()
+    
+    @Slot(int)
+    def setSystemVolume(self, volume: int):
+        volume = max(0, min(100, volume))
+        if self._system_volume != volume:
+            self._system_volume = volume
+            self._save_settings()
+            self.volumeChanged.emit()
+    
+    @Slot(result=int)
+    def getSystemVolume(self):
+        return self._system_volume
+
+    @Property(int, notify=volumeChanged)
+    def systemVolume(self):
+        return self._system_volume
 
     
     @Slot(str, result=list)
@@ -371,8 +413,108 @@ class StorageProvider(QObject):
     @Property(str)
     def storageRoot(self):
         return str(self._storage_root).replace("\\", "/")
-
-
+    
+    @Slot(str, result=bool)
+    def createDirectory(self, vfs_path: str) -> bool:
+        """Create a new directory."""
+        real_path = self._get_real_path(vfs_path)
+        
+        if not self._is_safe_path(real_path):
+            return False
+        
+        try:
+            real_path.mkdir(parents=True, exist_ok=True)
+            print(f"📁 Created directory: {vfs_path}")
+            return True
+        except Exception as e:
+            print(f"Error creating directory: {e}")
+            return False
+    
+    @Slot(str, result=bool)
+    def deleteItem(self, vfs_path: str) -> bool:
+        """Delete a file or directory."""
+        real_path = self._get_real_path(vfs_path)
+        
+        if not real_path.exists() or not self._is_safe_path(real_path):
+            return False
+        
+        try:
+            if real_path.is_dir():
+                import shutil
+                shutil.rmtree(real_path)
+            else:
+                real_path.unlink()
+            print(f"🗑 Deleted: {vfs_path}")
+            return True
+        except Exception as e:
+            print(f"Error deleting item: {e}")
+            return False
+    
+    @Slot(str, str, result=bool)
+    def renameItem(self, vfs_path: str, new_name: str) -> bool:
+        """Rename a file or directory."""
+        real_path = self._get_real_path(vfs_path)
+        
+        if not real_path.exists() or not self._is_safe_path(real_path):
+            return False
+            
+        try:
+            new_path = real_path.parent / new_name
+            
+            # Security check for new path
+            if not self._is_safe_path(new_path):
+                return False
+                
+            real_path.rename(new_path)
+            print(f"✏ Renamed: {real_path.name} -> {new_name}")
+            return True
+        except Exception as e:
+            print(f"Error renaming item: {e}")
+            return False
+    
+    @Slot(result=str)
+    def getSystemInfo(self) -> str:
+        """Get system information as JSON string."""
+        import platform
+        import json
+        
+        try:
+            import psutil
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            memory = psutil.virtual_memory()
+            disk = psutil.disk_usage(str(self._storage_root))
+            
+            info = {
+                "cpu": {
+                    "name": platform.processor() or "Unknown",
+                    "cores": psutil.cpu_count(),
+                    "usage": cpu_percent
+                },
+                "memory": {
+                    "total": round(memory.total / (1024**3), 1),  # GB
+                    "used": round(memory.used / (1024**3), 1),
+                    "percent": memory.percent
+                },
+                "storage": {
+                    "total": round(disk.total / (1024**3), 1),
+                    "used": round(disk.used / (1024**3), 1),
+                    "percent": disk.percent
+                },
+                "os": platform.system() + " " + platform.release(),
+                "python": platform.python_version()
+            }
+            return json.dumps(info)
+        except ImportError:
+            return json.dumps({
+                "cpu": {"name": platform.processor() or "Unknown", "cores": 0, "usage": 0},
+                "memory": {"total": 0, "used": 0, "percent": 0},
+                "storage": {"total": 0, "used": 0, "percent": 0},
+                "os": platform.system() + " " + platform.release(),
+                "python": platform.python_version()
+            })
+        except Exception as e:
+            print(f"Error getting system info: {e}")
+            return "{}"
 
 
 class DesktopEnvironment(QObject):
@@ -406,6 +548,20 @@ class DesktopEnvironment(QObject):
         storage_root = Path(__file__).parent.parent / "Storage" / "User"
         self.storage_provider = StorageProvider(storage_root, self)
         
+        # Initialize system services
+        from .system_services import (
+            AccessibilitySettings, FileAssociations, AppRegistry, 
+            GlassSentinel, ResourceMonitor
+        )
+        
+        self.accessibility = AccessibilitySettings(storage_root)
+        self.file_associations = FileAssociations()
+        self.app_registry = AppRegistry(storage_root)
+        self.resource_monitor = ResourceMonitor()
+        
+        # Install Sentinel (global exception handler)
+        self.sentinel = GlassSentinel.install()
+        
         # Only auto-set wallpaper if no saved wallpaper exists
         if not self.storage_provider.currentWallpaper:
             wallpapers = self.storage_provider.getWallpapers()
@@ -424,7 +580,7 @@ class DesktopEnvironment(QObject):
         """Set up QML context properties."""
         context = self.engine.rootContext()
         
-        # Expose providers to QML
+        # Core providers
         context.setContextProperty("Theme", self.theme_provider)
         context.setContextProperty("System", self.system_provider)
         context.setContextProperty("VFS", self.vfs_provider)
@@ -432,9 +588,17 @@ class DesktopEnvironment(QObject):
         context.setContextProperty("WindowManager", self.window_manager)
         context.setContextProperty("Desktop", self)
         
+        # System services
+        context.setContextProperty("Accessibility", self.accessibility)
+        context.setContextProperty("FileAssoc", self.file_associations)
+        context.setContextProperty("AppRegistry", self.app_registry)
+        context.setContextProperty("Sentinel", self.sentinel)
+        context.setContextProperty("ResourceMonitor", self.resource_monitor)
+        
         # Add import paths
         qml_path = Path(__file__).parent.parent / "qml"
         self.engine.addImportPath(str(qml_path))
+
 
     
     @Property(int)
