@@ -421,7 +421,7 @@ ApplicationWindow {
                         x: xPos, y: yPos,
                         windowTitle: "Weather",
                         windowIcon: "🌤",
-                        width: 500, height: 400
+                        width: 650, height: 550
                     })
                     break
                 case "AeroBrowser":

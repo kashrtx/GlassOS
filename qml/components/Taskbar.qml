@@ -587,19 +587,30 @@ Rectangle {
             
             // Clock
             Rectangle {
+                id: clockWidget
                 width: 80; height: 48
                 color: clockMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.08) : "transparent"
+                
+                // Current time property that updates every second
+                property date currentTime: new Date()
+                
+                Timer {
+                    interval: 1000
+                    running: true
+                    repeat: true
+                    onTriggered: clockWidget.currentTime = new Date()
+                }
                 
                 Column {
                     anchors.centerIn: parent
                     spacing: -2
                     Text { 
-                        text: Qt.formatTime(new Date(), "h:mm AP")
+                        text: Qt.formatTime(clockWidget.currentTime, "h:mm AP")
                         color: "#fff"; font.pixelSize: 12; font.weight: Font.Medium
                         anchors.horizontalCenter: parent.horizontalCenter
                     }
                     Text { 
-                        text: Qt.formatDate(new Date(), "M/d/yyyy")
+                        text: Qt.formatDate(clockWidget.currentTime, "M/d/yyyy")
                         color: "#aaa"; font.pixelSize: 10
                         anchors.horizontalCenter: parent.horizontalCenter
                     }
@@ -609,9 +620,298 @@ Rectangle {
                     id: clockMouse
                     anchors.fill: parent
                     hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: calendarPopup.opened ? calendarPopup.close() : calendarPopup.open()
                 }
                 
-                Timer { interval: 1000; running: true; repeat: true; onTriggered: {} }
+                // Calendar Popup - Windows 11 Style
+                Popup {
+                    id: calendarPopup
+                    y: -height - 58  // Position above taskbar (taskbar height ~48px + margin)
+                    x: parent.width - width  // Right-align with clock
+                    width: 320
+                    height: 400
+                    modal: false
+                    focus: true
+                    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                    
+                    property date currentDate: new Date()
+                    property date viewDate: new Date()
+                    property int viewMonth: viewDate.getMonth()
+                    property int viewYear: viewDate.getFullYear()
+                    
+                    function daysInMonth(month, year) {
+                        return new Date(year, month + 1, 0).getDate()
+                    }
+                    
+                    function firstDayOfMonth(month, year) {
+                        return new Date(year, month, 1).getDay()
+                    }
+                    
+                    function prevMonth() {
+                        if (viewMonth === 0) {
+                            viewMonth = 11
+                            viewYear--
+                        } else {
+                            viewMonth--
+                        }
+                        viewDate = new Date(viewYear, viewMonth, 1)
+                    }
+                    
+                    function nextMonth() {
+                        if (viewMonth === 11) {
+                            viewMonth = 0
+                            viewYear++
+                        } else {
+                            viewMonth++
+                        }
+                        viewDate = new Date(viewYear, viewMonth, 1)
+                    }
+                    
+                    function goToToday() {
+                        currentDate = new Date()
+                        viewDate = new Date()
+                        viewMonth = viewDate.getMonth()
+                        viewYear = viewDate.getFullYear()
+                    }
+                    
+                    background: Rectangle {
+                        color: Qt.rgba(0.1, 0.12, 0.18, 0.98)
+                        radius: 12
+                        border.width: 1
+                        border.color: Qt.rgba(0.4, 0.6, 0.9, 0.3)
+                        
+                        // Shadow
+                        Rectangle {
+                            anchors.fill: parent
+                            anchors.margins: -6
+                            z: -1
+                            radius: 16
+                            color: Qt.rgba(0, 0, 0, 0.5)
+                        }
+                    }
+                    
+                    contentItem: Column {
+                        spacing: 12
+                        padding: 16
+                        
+                        // Current time - large display
+                        Column {
+                            width: parent.width - 32
+                            spacing: 4
+                            
+                            Text {
+                                text: Qt.formatTime(calendarPopup.currentDate, "h:mm:ss AP")
+                                font.pixelSize: 42
+                                font.family: "Segoe UI"
+                                font.weight: Font.Light
+                                color: "#ffffff"
+                            }
+                            
+                            Text {
+                                text: Qt.formatDate(calendarPopup.currentDate, "dddd, MMMM d, yyyy")
+                                font.pixelSize: 14
+                                font.family: "Segoe UI"
+                                color: "#888888"
+                            }
+                        }
+                        
+                        // Divider
+                        Rectangle {
+                            width: parent.width - 32
+                            height: 1
+                            color: Qt.rgba(1, 1, 1, 0.1)
+                        }
+                        
+                        // Month navigation
+                        Row {
+                            width: parent.width - 32
+                            spacing: 8
+                            
+                            Rectangle {
+                                width: 32
+                                height: 32
+                                radius: 6
+                                color: prevMonthMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.15) : "transparent"
+                                
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "◀"
+                                    font.pixelSize: 14
+                                    color: "#ffffff"
+                                }
+                                
+                                MouseArea {
+                                    id: prevMonthMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: calendarPopup.prevMonth()
+                                }
+                            }
+                            
+                            Text {
+                                text: Qt.formatDate(new Date(calendarPopup.viewYear, calendarPopup.viewMonth, 1), "MMMM yyyy")
+                                font.pixelSize: 14
+                                font.weight: Font.DemiBold
+                                color: "#ffffff"
+                                horizontalAlignment: Text.AlignHCenter
+                                Layout.fillWidth: true
+                                width: parent.width - 80
+                            }
+                            
+                            Rectangle {
+                                width: 32
+                                height: 32
+                                radius: 6
+                                color: nextMonthMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.15) : "transparent"
+                                
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "▶"
+                                    font.pixelSize: 14
+                                    color: "#ffffff"
+                                }
+                                
+                                MouseArea {
+                                    id: nextMonthMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: calendarPopup.nextMonth()
+                                }
+                            }
+                        }
+                        
+                        // Day names header
+                        Row {
+                            width: parent.width - 32
+                            spacing: 0
+                            
+                            Repeater {
+                                model: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+                                
+                                Item {
+                                    width: (parent.width) / 7
+                                    height: 24
+                                    
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: modelData
+                                        font.pixelSize: 11
+                                        font.weight: Font.DemiBold
+                                        color: index === 0 || index === 6 ? "#888888" : "#aaaaaa"
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Calendar grid
+                        Grid {
+                            columns: 7
+                            width: parent.width - 32
+                            spacing: 0
+                            
+                            property int totalDays: calendarPopup.daysInMonth(calendarPopup.viewMonth, calendarPopup.viewYear)
+                            property int startDay: calendarPopup.firstDayOfMonth(calendarPopup.viewMonth, calendarPopup.viewYear)
+                            property int prevMonthDays: calendarPopup.viewMonth === 0 
+                                ? calendarPopup.daysInMonth(11, calendarPopup.viewYear - 1)
+                                : calendarPopup.daysInMonth(calendarPopup.viewMonth - 1, calendarPopup.viewYear)
+                            
+                            Repeater {
+                                model: 42  // 6 weeks x 7 days
+                                
+                                Rectangle {
+                                    width: (parent.width) / 7
+                                    height: 32
+                                    radius: 16
+                                    
+                                    property int dayNum: {
+                                        var startDay = calendarPopup.firstDayOfMonth(calendarPopup.viewMonth, calendarPopup.viewYear)
+                                        var totalDays = calendarPopup.daysInMonth(calendarPopup.viewMonth, calendarPopup.viewYear)
+                                        var prevMonthDays = calendarPopup.viewMonth === 0 
+                                            ? calendarPopup.daysInMonth(11, calendarPopup.viewYear - 1)
+                                            : calendarPopup.daysInMonth(calendarPopup.viewMonth - 1, calendarPopup.viewYear)
+                                        
+                                        if (index < startDay) {
+                                            return prevMonthDays - startDay + index + 1
+                                        } else if (index >= startDay + totalDays) {
+                                            return index - startDay - totalDays + 1
+                                        }
+                                        return index - startDay + 1
+                                    }
+                                    
+                                    property bool isCurrentMonth: {
+                                        var startDay = calendarPopup.firstDayOfMonth(calendarPopup.viewMonth, calendarPopup.viewYear)
+                                        var totalDays = calendarPopup.daysInMonth(calendarPopup.viewMonth, calendarPopup.viewYear)
+                                        return index >= startDay && index < startDay + totalDays
+                                    }
+                                    
+                                    property bool isToday: {
+                                        var today = calendarPopup.currentDate
+                                        return isCurrentMonth && 
+                                               dayNum === today.getDate() && 
+                                               calendarPopup.viewMonth === today.getMonth() && 
+                                               calendarPopup.viewYear === today.getFullYear()
+                                    }
+                                    
+                                    color: isToday ? "#4a9eff" : (dayMouse.containsMouse && isCurrentMonth ? Qt.rgba(1, 1, 1, 0.15) : "transparent")
+                                    
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: dayNum
+                                        font.pixelSize: 13
+                                        font.weight: isToday ? Font.Bold : Font.Normal
+                                        color: isToday ? "#ffffff" : (isCurrentMonth ? "#ffffff" : "#555555")
+                                    }
+                                    
+                                    MouseArea {
+                                        id: dayMouse
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: isCurrentMonth ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Today button
+                        Rectangle {
+                            width: parent.width - 32
+                            height: 32
+                            radius: 6
+                            color: todayMouse.containsMouse ? Qt.rgba(0.3, 0.5, 0.8, 0.4) : Qt.rgba(1, 1, 1, 0.08)
+                            
+                            Text {
+                                anchors.centerIn: parent
+                                text: "📅 Go to Today"
+                                font.pixelSize: 12
+                                color: "#ffffff"
+                            }
+                            
+                            MouseArea {
+                                id: todayMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: calendarPopup.goToToday()
+                            }
+                        }
+                    }
+                    
+                    // Timer to update current time
+                    Timer {
+                        interval: 1000
+                        running: calendarPopup.opened
+                        repeat: true
+                        onTriggered: calendarPopup.currentDate = new Date()
+                    }
+                    
+                    onOpened: {
+                        currentDate = new Date()
+                        goToToday()
+                    }
+                }
             }
             
             // Show Desktop Button (Windows style)

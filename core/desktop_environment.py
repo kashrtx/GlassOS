@@ -846,6 +846,15 @@ class DesktopEnvironment(QObject):
             print(f"⚠️ AdBlocker not available: {e}")
             self.adblocker = None
         
+        # Initialize Weather Service
+        try:
+            from .weather_service import WeatherProvider
+            self.weather_provider = WeatherProvider(self)
+            print("🌤️ Weather service initialized")
+        except ImportError as e:
+            print(f"⚠️ Weather service not available: {e}")
+            self.weather_provider = None
+        
         # Only auto-set wallpaper if no saved wallpaper exists
         if not self.storage_provider.currentWallpaper:
             wallpapers = self.storage_provider.getWallpapers()
@@ -882,6 +891,10 @@ class DesktopEnvironment(QObject):
         # Browser services
         if self.adblocker:
             context.setContextProperty("AdBlocker", self.adblocker)
+        
+        # Weather service
+        if self.weather_provider:
+            context.setContextProperty("WeatherService", self.weather_provider)
         
         # Add import paths
         qml_path = Path(__file__).parent.parent / "qml"
