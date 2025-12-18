@@ -80,7 +80,7 @@ Rectangle {
         
         // Sidebar
         Rectangle {
-            Layout.preferredWidth: 150
+            Layout.preferredWidth: 180
             Layout.fillHeight: true
             color: Qt.rgba(0, 0, 0, 0.3)
             
@@ -390,7 +390,7 @@ Rectangle {
                             Column {
                                 anchors.verticalCenter: parent.verticalCenter
                                 Text { text: "GlassOS 1.0"; font.pixelSize: 22; font.bold: true; color: "#fff" }
-                                Text { text: "A premium Python desktop experience"; color: "#aaa"; font.pixelSize: currentFontSize; font.bold: isBold }
+                                Text { text: "A glassy Python desktop experience. By KashRTX (ಥ﹏ಥ)"; color: "#aaa"; font.pixelSize: currentFontSize; font.bold: isBold }
                             }
                         }
                     }

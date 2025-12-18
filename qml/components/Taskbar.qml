@@ -315,12 +315,12 @@ Rectangle {
                 
                 Popup {
                     id: previewPopup
-                    property bool useListMode: modelData.windows.length > 5
+                    property bool useListMode: modelData.windows.length > 3
                     
                     y: -height - 10
                     x: (parent.width - width) / 2
                     
-                    width: useListMode ? 220 : Math.min(600, modelData.windows.length * 200)
+                    width: useListMode ? 220 : Math.min(600, modelData.windows.length * 190)
                     height: useListMode ? Math.min(400, modelData.windows.length * 36 + 16) : 150
                     
                     padding: 0
@@ -406,7 +406,7 @@ Rectangle {
                                     }
                                     
                                     Rectangle {
-                                        width: 18; height: 18
+                                        width: 12; height: 12
                                         color: closeListMouse.containsMouse ? "#cc3333" : "transparent"
                                         radius: 3
                                         anchors.verticalCenter: parent.verticalCenter

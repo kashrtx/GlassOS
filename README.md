@@ -1,263 +1,236 @@
-# 🌟 GlassOS - Aero-Mojo Operating System Environment
+<div align="center">
 
-<p align="center">
-  <img src="assets/logo.png" alt="GlassOS Logo" width="200"/>
-</p>
+# 🖥️ GlassOS
 
-> **A stunning, high-performance desktop environment with a liquid glass aesthetic, built with Python + PySide6 + Mojo**
+### A Modern Desktop Environment Built with Python & Qt
 
-[![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
-[![PySide6](https://img.shields.io/badge/PySide6-6.6+-green.svg)](https://doc.qt.io/qtforpython/)
-[![License](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
+![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)
+![Qt](https://img.shields.io/badge/Qt-6.x-green?logo=qt&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-yellow)
+![Status](https://img.shields.io/badge/Status-Beta-orange)
 
----
+*A lightweight, customizable desktop environment inspired by modern operating systems*
 
-## ✨ Features
-
-### 🎨 Glass Aero Aesthetic
-- **Liquid Glass Effects** - Realistic translucent blur on all UI elements
-- **Dynamic Reflections** - Light-responsive window frames and taskbar
-- **Smooth Animations** - Buttery 60fps transitions throughout
-- **Premium Dark Theme** - Modern dark glass aesthetic with blue accents
-
-### 🖥️ Desktop Environment
-- **Animated Wallpapers** - Custom wallpaper support with subtle animations
-- **Desktop Icons** - Draggable icons with context menus
-- **Recycle Bin** - Full delete/restore functionality
-- **Windows 11-style Taskbar** - Running apps, system tray, and live clock
-
-### 🪟 Window Management
-- **Smart Snapping** - Snap windows to edges (half-screen, quarter-screen)
-- **Frameless Windows** - Custom-decorated, draggable, resizable windows
-- **Window Preview** - Hover taskbar icons for live window previews
-- **Minimize/Maximize/Close** - Full window control support
-
-### 📱 Built-in Applications
-
-| App | Description |
-|-----|-------------|
-| 🌐 **AeroBrowser** | Full Chromium-based web browser with tabs, bookmarks, downloads, and **built-in ad blocker** |
-| 📝 **GlassPad** | Rich text editor with formatting and file save/load |
-| 🌤️ **Weather** | **Real-time weather** from Open-Meteo API with city search, 7-day forecast, UV index, sunrise/sunset |
-| 🧮 **Calculator** | Intuitive glass calculator with history |
-| 📁 **AeroExplorer** | Fast file manager with VFS, image preview, wallpaper setting |
-| ⚙️ **Settings** | System settings including wallpaper, accessibility, personalization |
-| 🖼️ **Image Viewer** | View images with zoom and set as wallpaper |
-
-### 🛡️ Privacy & Security
-- **Built-in Ad Blocker** - Blocks 100+ ad networks and trackers
-- **Pattern-based Blocking** - Blocks tracking pixels and analytics
-- **Whitelist Support** - Allow trusted domains
-- **Real-time Counter** - See how many ads/trackers blocked
-
-### 📅 System Widgets
-- **Live Clock** - Real-time updating clock in taskbar
-- **Calendar Popup** - Windows 11-style calendar with month navigation
-- **Volume Control** - Popup slider for system volume
-- **Network Status** - Connection indicator in system tray
-
-### ⚡ Performance Optimizations
-- **Threaded Rendering** - UI renders on separate thread for smoothness
-- **Hardware Acceleration** - OpenGL-accelerated graphics
-- **Multi-process Browser** - Chromium runs in separate processes
-- **Elevated Priority** - Process runs at above-normal priority
-- **Mojo Integration** - Performance-critical modules in Mojo
+</div>
 
 ---
 
-## 🚀 Quick Start
+## ⚠️ Important Notice
+
+> **This is beta software.** GlassOS is a demonstration project and proof-of-concept. It is not intended for production use and may contain bugs, incomplete features, or unexpected behavior. This project serves as an educational example of building a desktop environment using Python and QML.
+
+---
+
+## 📖 What is GlassOS?
+
+GlassOS is a desktop environment simulation built entirely in Python using PySide6 (Qt for Python). It provides a Windows-inspired user interface with a modern, glass-like aesthetic.
+
+The goal of this project is to demonstrate that it's possible to create a functional, visually appealing desktop environment using Python — making it accessible for learning, experimentation, and customization.
+
+### ✨ Key Features
+
+| Feature | Description |
+|---------|-------------|
+| 🪟 **Window Management** | Draggable, resizable windows with minimize, maximize, and close |
+| 📁 **File Explorer** | Browse files with grid/details view, multi-select, and context menus |
+| 📝 **Notepad** | Simple text editor with file operations |
+| 🧮 **Calculator** | Scientific calculator with expression parsing and history |
+| 🌤️ **Weather App** | Real-time weather data with city search and persistence |
+| 🌐 **Web Browser** | Basic web browsing with tabs |
+| ⚙️ **Settings** | Customize themes, wallpapers, and preferences |
+| 🗑️ **Recycle Bin** | Delete and restore files |
+| 🖼️ **Desktop Icons** | Drag-and-drop desktop with customizable icons |
+
+---
+
+## 🚀 Getting Started
 
 ### Prerequisites
+
 - **Python 3.10** or higher
-- **PySide6 6.6+** (Qt for Python)
-- **Internet connection** (for Weather app and browser)
-- Mojo (optional, for performance modules)
+- **pip** (Python package manager)
 
 ### Installation
 
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/GlassOS.git
-cd GlassOS
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/yourusername/GlassOS.git
+   cd GlassOS
+   ```
 
-# Create virtual environment (recommended)
-python -m venv venv
-venv\Scripts\activate          # Windows
-# source venv/bin/activate     # Linux/macOS
+2. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
+   
+   Or install manually:
+   ```bash
+   pip install PySide6 requests
+   ```
 
-# Install dependencies
-pip install -r requirements.txt
+3. **Run GlassOS**
+   ```bash
+   python main.py
+   ```
 
-# Run GlassOS
-python main.py
-```
-
-### Running GlassOS
-
-```bash
-# Standard launch
-python main.py
-
-# The application will:
-# 1. Initialize Qt WebEngine for browser support
-# 2. Set up the Virtual File System
-# 3. Load your saved wallpaper and settings
-# 4. Display the full desktop environment
-```
-
-### Controls
-| Action | Shortcut/Method |
-|--------|-----------------|
-| Open Start Menu | Click ⊞ button or press Windows key |
-| Search Apps | Type in Start Menu search bar |
-| Launch App | Click app icon in Start Menu |
-| Close Window | Click ✕ or press Alt+F4 |
-| Minimize Window | Click — button |
-| Maximize Window | Click □ button |
-| Show Desktop | Click far-right edge of taskbar |
-| Open Calendar | Click clock in taskbar |
-| Adjust Volume | Click speaker icon |
-| Exit GlassOS | Press Ctrl+Q or click Power in Start Menu |
+That's it! GlassOS should launch in a window.
 
 ---
 
-## 🏗️ Architecture
+## 📂 Project Structure
 
 ```
 GlassOS/
-├── main.py                     # Entry point with performance optimizations
-├── requirements.txt            # Python dependencies
-├── core/                       # Core system modules
-│   ├── desktop_environment.py  # Main desktop controller
-│   ├── vfs.py                  # Virtual File System
-│   ├── storage.py              # Persistent storage provider
-│   ├── adblocker.py            # Ad blocker with URL interception
-│   ├── weather_service.py      # Real weather API integration
-│   ├── accessibility.py        # Accessibility features
-│   └── sentinel.py             # Error handling & recovery
-├── qml/                        # QML UI definitions
-│   ├── Main.qml                # Main desktop window
-│   ├── apps/                   # Application UIs
-│   │   ├── Browser.qml         # AeroBrowser
-│   │   ├── Weather.qml         # Weather app
-│   │   ├── Calculator.qml      # Calculator
-│   │   ├── Notepad.qml         # GlassPad
-│   │   ├── Explorer.qml        # File Explorer
-│   │   └── Settings.qml        # Settings app
-│   └── components/             # Reusable components
-│       ├── Taskbar.qml         # Taskbar with calendar
-│       ├── StartMenu.qml       # Start menu with search
-│       ├── GlassWindow.qml     # Window frame component
-│       ├── GlassButton.qml     # Glass-style buttons
-│       └── Theme.qml           # Color theme definitions
-├── mojo/                       # Mojo performance modules
-│   └── vfs_indexer.mojo        # Fast file indexing
-├── assets/                     # Icons, images, fonts
-├── Storage/                    # User data storage
-│   └── User/
-│       ├── Pictures/Wallpapers/
-│       ├── Documents/
-│       └── Downloads/
-└── vfs_data/                   # Virtual file system data
+├── main.py                 # Entry point - starts the application
+├── requirements.txt        # Python dependencies
+├── LICENSE                 # MIT License
+│
+├── core/                   # Core Python modules
+│   ├── desktop_environment.py   # Main desktop logic
+│   ├── window_manager.py        # Window management
+│   ├── storage_manager.py       # Virtual file system
+│   ├── weather_service.py       # Weather API integration
+│   └── ...
+│
+├── qml/                    # User interface (QML files)
+│   ├── Main.qml            # Main window layout
+│   ├── apps/               # Application UIs
+│   │   ├── Explorer.qml    # File Explorer
+│   │   ├── Calculator.qml  # Calculator
+│   │   ├── Weather.qml     # Weather app
+│   │   ├── Notepad.qml     # Text editor
+│   │   └── ...
+│   └── components/         # Reusable UI components
+│
+├── assets/                 # Icons, images, and resources
+│
+└── Storage/                # Virtual file system data
+    ├── User/               # User files (Documents, Pictures, etc.)
+    └── Settings/           # App settings and preferences
 ```
 
 ---
 
-## 🎯 Technical Details
+## 🎮 How to Use
 
-### Technology Stack
-| Component | Technology |
-|-----------|------------|
-| GUI Framework | PySide6 (Qt 6 for Python) |
-| UI Language | QML with JavaScript |
-| Browser Engine | QtWebEngine (Chromium) |
-| Weather API | Open-Meteo (free, no API key) |
-| Performance | Mojo for compute-intensive tasks |
-| Storage | SQLite-backed persistent storage |
+### Launching Apps
+- **Double-click** a desktop icon to open an app
+- Use the **taskbar** at the bottom to switch between open windows
 
-### Key Features Implementation
+### File Explorer
+- Navigate folders by clicking in the sidebar or breadcrumb path
+- **Right-click** for context menu (Cut, Copy, Paste, Delete, Rename)
+- Use **Ctrl+Click** or **checkboxes** to select multiple files
+- Toggle between **Grid** and **Details** view
 
-#### 🛡️ Ad Blocker
-- Uses `QWebEngineUrlRequestInterceptor` for real-time URL blocking
-- Blocks 100+ known ad/tracker domains
-- Pattern matching for tracking URLs
-- Configurable whitelist
+### Keyboard Shortcuts
 
-#### 🌤️ Weather Service
-- Fetches from Open-Meteo Geocoding + Weather APIs
-- City search with autocomplete
-- 7-day forecast with precipitation and UV index
-- Celsius/Fahrenheit toggle
-
-#### 📅 Calendar Widget
-- Full month calendar view
-- Navigate between months
-- Highlights current day
-- "Go to Today" quick button
-
-### Glass Aero Theme
-The theme uses advanced QML features:
-- Custom gradients for glass effect
-- `Qt.rgba()` for translucency
-- Smooth animations with `Behavior`
-- Canvas for custom icons
-- Blur overlays for depth
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+C` | Copy |
+| `Ctrl+X` | Cut |
+| `Ctrl+V` | Paste |
+| `Ctrl+A` | Select All |
+| `Delete` | Move to Recycle Bin |
+| `F5` | Refresh |
+| `Ctrl+Q` | Exit GlassOS |
 
 ---
 
-## 📋 Requirements
+## 🛠️ Configuration
 
-```
-PySide6>=6.6.0
-PySide6-Addons>=6.6.0
-```
+### Changing Wallpaper
+1. Open **Settings** from the desktop
+2. Go to the **Wallpaper** section
+3. Select a new wallpaper or add your own
 
-For browser functionality, you also need:
-```
-PySide6-WebEngine>=6.6.0
-```
-
----
-
-## 🐛 Troubleshooting
-
-### Browser not working
-Make sure you have `PySide6-WebEngine` installed:
-```bash
-pip install PySide6-WebEngine
-```
-
-### Weather not loading
-The Weather app requires an internet connection. It uses the free Open-Meteo API which doesn't require an API key.
-
-### Slow performance
-GlassOS automatically enables performance optimizations, but you can also:
-- Close unused applications
-- Reduce the number of open windows
-- Ensure hardware acceleration is available
-
----
-
-## 📄 License
-
-MIT License - See [LICENSE](LICENSE) for details.
+### Weather Location
+1. Open the **Weather** app
+2. Click the search icon (🔍)
+3. Type a city name and select from results
+4. Your selection is saved automatically
 
 ---
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! This project is open for anyone to improve.
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+### How to Contribute
+
+1. **Fork** the repository
+2. **Create a branch** for your feature or fix
+   ```bash
+   git checkout -b feature/my-new-feature
+   ```
+3. **Make your changes**
+4. **Test** your changes thoroughly
+5. **Commit** with a clear message
+   ```bash
+   git commit -m "Add: Description of your changes"
+   ```
+6. **Push** to your fork
+   ```bash
+   git push origin feature/my-new-feature
+   ```
+7. **Open a Pull Request**
+
+### Ideas for Contributions
+
+- 🐛 Bug fixes
+- 🎨 UI/UX improvements
+- 📱 New applications
+- 🔧 Performance optimizations
+- 📚 Documentation improvements
+- 🌍 Translations
 
 ---
 
-<p align="center">
-  <b>Made with 💎 by the GlassOS Team</b>
-  <br>
-  <i>Experience the future of desktop environments</i>
-</p>
+## ⚠️ Known Limitations
+
+Since this is a beta project built for demonstration purposes:
+
+- This is **not a real operating system** — it runs as a Python application
+- Some features may be incomplete or have bugs
+- Performance may vary depending on your system
+- The virtual file system is separate from your actual files
+- Internet connection required for Weather app
+
+---
+
+## 📜 License
+
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
+
+You are free to:
+- ✅ Use this code for any purpose
+- ✅ Modify and customize it
+- ✅ Distribute your own versions
+- ✅ Use it in commercial projects
+
+---
+
+## 🙏 Acknowledgments
+
+- Inspired by **Windows 11** and modern desktop environments
+- Built with [PySide6](https://wiki.qt.io/Qt_for_Python) (Qt for Python)
+- Weather data from [Open-Meteo](https://open-meteo.com/) (free, no API key needed)
+
+---
+
+## 📧 Contact
+
+If you have questions, suggestions, or just want to say hi:
+
+- Open an **Issue** on GitHub
+- Submit a **Pull Request** with improvements
+
+---
+
+<div align="center">
+
+**Made with ❤️ and Python**
+
+*GlassOS is a learning project — not perfect, but hopefully useful!*
+
+</div>
