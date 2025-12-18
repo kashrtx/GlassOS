@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🖥️ GlassOS
+# 🖥️ GlassOS 
 
 ### A Modern Desktop Environment Built with Python & Qt
 
@@ -33,7 +33,7 @@ The goal of this project is to demonstrate that it's possible to create a functi
 
 | Feature | Description |
 |---------|-------------|
-| 🪟 **Window Management** | Draggable, resizable windows with minimize, maximize, and close |
+| 🪟 **Window Management** | Supports split-screen viewing with draggable, resizable windows and standard window controls (minimize, maximize, and close) |
 | 📁 **File Explorer** | Browse files with grid/details view, multi-select, and context menus |
 | 📝 **Notepad** | Simple text editor with file operations |
 | 🧮 **Calculator** | Scientific calculator with expression parsing and history |
