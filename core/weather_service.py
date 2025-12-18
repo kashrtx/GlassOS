@@ -211,9 +211,12 @@ class WeatherProvider(QObject):
     # Signals
     weatherUpdated = Signal()
     forecastUpdated = Signal()
+    hourlyUpdated = Signal()
     searchResultsReady = Signal()
     loadingChanged = Signal()
     errorOccurred = Signal(str)
+    
+    SETTINGS_FILE = "weather_settings.json"
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -246,14 +249,59 @@ class WeatherProvider(QObject):
         self._sunrise = ""
         self._sunset = ""
         self._uv_index = 0
+        self._visibility = 0
+        self._dew_point = 0
         self._forecast = []
+        self._hourly = []
         self._search_results = []
         self._is_loading = False
         self._last_updated = ""
         
-        # Current location
+        # Current location - will be loaded from settings
         self._latitude = 40.7128  # NYC default
         self._longitude = -74.0060
+        
+        # Load saved city on startup
+        self._load_settings()
+    
+    def _get_settings_path(self):
+        """Get the path to settings file."""
+        import os
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return os.path.join(base_dir, "Storage", "Settings", self.SETTINGS_FILE)
+    
+    def _load_settings(self):
+        """Load saved city from settings file."""
+        try:
+            settings_path = self._get_settings_path()
+            import os
+            if os.path.exists(settings_path):
+                with open(settings_path, 'r') as f:
+                    settings = json.load(f)
+                    self._city = settings.get("city", "New York")
+                    self._country = settings.get("country", "US")
+                    self._latitude = settings.get("latitude", 40.7128)
+                    self._longitude = settings.get("longitude", -74.0060)
+                    print(f"🌤️ Loaded saved city: {self._city}")
+        except Exception as e:
+            print(f"⚠️ Could not load weather settings: {e}")
+    
+    def _save_settings(self):
+        """Save current city to settings file."""
+        try:
+            settings_path = self._get_settings_path()
+            import os
+            os.makedirs(os.path.dirname(settings_path), exist_ok=True)
+            with open(settings_path, 'w') as f:
+                json.dump({
+                    "city": self._city,
+                    "country": self._country,
+                    "latitude": self._latitude,
+                    "longitude": self._longitude
+                }, f)
+                print(f"💾 Saved city: {self._city}")
+        except Exception as e:
+            print(f"⚠️ Could not save weather settings: {e}")
     
     def _on_weather_received(self, data: dict):
         """Handle received weather data."""
@@ -327,6 +375,7 @@ class WeatherProvider(QObject):
             self._longitude = city["longitude"]
             self._search_results = []
             self.searchResultsReady.emit()
+            self._save_settings()  # Persist the selected city
             self.refresh()
     
     @Slot(float, float, str)
