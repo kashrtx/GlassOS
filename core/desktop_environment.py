@@ -9,7 +9,7 @@ from typing import Dict, Any, Optional
 from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QApplication
 from PySide6.QtCore import Qt, QUrl, QObject, Signal, Slot, Property, QTimer
 from PySide6.QtGui import QScreen, QColor, QIcon
-from PySide6.QtQml import QQmlApplicationEngine, QQmlContext, qmlRegisterType
+from PySide6.QtQml import QQmlApplicationEngine, QQmlContext
 
 from .config import Config
 from .vfs import VirtualFileSystem
@@ -118,18 +118,20 @@ class SystemProvider(QObject):
     
     @Property(str, notify=timeChanged)
     def currentTime(self):
-        from datetime import datetime
-        return datetime.now().strftime("%I:%M %p")
+        return self._get_datetime().strftime("%I:%M %p")
     
     @Property(str, notify=timeChanged)
     def currentDate(self):
-        from datetime import datetime
-        return datetime.now().strftime("%A, %B %d, %Y")
+        return self._get_datetime().strftime("%A, %B %d, %Y")
     
     @Property(str, notify=timeChanged)
     def shortDate(self):
+        return self._get_datetime().strftime("%m/%d/%Y")
+    
+    def _get_datetime(self):
+        """Cached datetime import and call."""
         from datetime import datetime
-        return datetime.now().strftime("%m/%d/%Y")
+        return datetime.now()
     
     @Slot(result=str)
     def getVersion(self):
@@ -199,7 +201,6 @@ class StorageProvider(QObject):
     """Provides real file system access to the Storage/User directory."""
     
     wallpaperChanged = Signal()
-    volumeChanged = Signal()
     volumeChanged = Signal()
     clipboardChanged = Signal()
     desktopUpdated = Signal()
@@ -356,6 +357,8 @@ class StorageProvider(QObject):
              
         try:
             import shutil
+            source_was_desktop = "/Desktop/" in self._clipboard_path
+            
             if self._clipboard_op == "copy":
                 if source_real.is_dir():
                     shutil.copytree(source_real, target_path)
@@ -366,6 +369,10 @@ class StorageProvider(QObject):
                 self._clipboard_path = "" # Clear clipboard after cut
                 self._clipboard_op = ""
                 self.clipboardChanged.emit()
+                
+                # If source was on desktop, notify UI to refresh
+                if source_was_desktop:
+                    self.desktopUpdated.emit()
                 
             print(f"📋 Pasted to {target_dir_vfs}")
             return True
@@ -627,8 +634,8 @@ class StorageProvider(QObject):
         try:
             real_path.parent.mkdir(parents=True, exist_ok=True)
             real_path.write_text(content, encoding="utf-8")
-            if "/Desktop/" in vfs_path:
-                self.desktopUpdated.emit()
+            # NOTE: Do NOT emit desktopUpdated here - the QML side adds the icon directly
+            # to avoid race conditions causing ghost duplicates.
             return True
         except Exception as e:
             print(f"Error writing file: {e}")
@@ -663,8 +670,9 @@ class StorageProvider(QObject):
         try:
             real_path.mkdir(parents=True, exist_ok=True)
             print(f"📁 Created directory: {vfs_path}")
-            if "/Desktop/" in vfs_path:
-                self.desktopUpdated.emit()
+            # NOTE: Do NOT emit desktopUpdated here - the QML side adds the icon directly
+            # to avoid race conditions causing ghost duplicates. The refresh will happen
+            # when saveDesktopIcons is called.
             return True
         except Exception as e:
             print(f"Error creating directory: {e}")

@@ -26,7 +26,6 @@ class AccessibilitySettings(QObject):
         
         # Safe presets only (no dynamic scaling that causes crashes)
         self._font_size_preset = 1  # 0=Small, 1=Normal, 2=Large, 3=XLarge
-        self._font_size_preset = 1  # 0=Small, 1=Normal, 2=Large, 3=XLarge
         self._high_contrast = False
         self._bold_text = False
         
@@ -37,7 +36,6 @@ class AccessibilitySettings(QObject):
             if self._settings_file.exists():
                 data = json.loads(self._settings_file.read_text())
                 self._font_size_preset = data.get("fontSizePreset", 1)
-                self._font_size_preset = data.get("fontSizePreset", 1)
                 self._high_contrast = data.get("highContrast", False)
                 self._bold_text = data.get("boldText", False)
                 print(f"🔧 Accessibility: preset={self._font_size_preset}")
@@ -47,7 +45,6 @@ class AccessibilitySettings(QObject):
     def _save_settings(self):
         try:
             data = {
-                "fontSizePreset": self._font_size_preset,
                 "fontSizePreset": self._font_size_preset,
                 "highContrast": self._high_contrast,
                 "boldText": self._bold_text
@@ -277,8 +274,12 @@ class ResourceMonitor(QObject):
             self._memory_used_gb = mem.used / (1024**3)
             self._memory_total_gb = mem.total / (1024**3)
             self.updated.emit()
-        except:
+        except ImportError:
+            # psutil not installed - gracefully degrade
             pass
+        except Exception as e:
+            # Log but don't crash on monitoring failures
+            print(f"⚠️ Resource monitoring error: {e}")
     
     @Property(float, notify=updated)
     def cpuPercent(self) -> float:

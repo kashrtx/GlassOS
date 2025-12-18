@@ -152,5 +152,5 @@ class Config:
         }
 
 
-# Default configuration instance
-DEFAULT_CONFIG = Config()
+# Note: Config() auto-loads from file in __post_init__
+# Use Config._skip_load=True for a pure default template if needed

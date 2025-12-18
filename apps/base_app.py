@@ -3,12 +3,17 @@ GlassOS Base Application Class
 All built-in apps inherit from this class.
 """
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod, ABCMeta
 from typing import Optional, Dict, Any
 from PySide6.QtCore import QObject, Signal, Slot, Property
 
 
-class BaseApp(QObject):
+class CombinedMeta(type(QObject), ABCMeta):
+    """Metaclass that combines QObject and ABC metaclasses."""
+    pass
+
+
+class BaseApp(QObject, metaclass=CombinedMeta):
     """
     Base class for all GlassOS applications.
     Provides common interface for window management integration.

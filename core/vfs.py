@@ -5,7 +5,6 @@ Provides a sandboxed file system for applications.
 
 import json
 import os
-import shutil
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Any
@@ -93,6 +92,35 @@ class VirtualFileSystem:
         self._nodes: Dict[str, VFSNode] = {}
         self._index: Dict[str, List[str]] = {}  # Search index
         self._lock = threading.RLock()
+        
+        # Debounced save mechanism for better performance
+        self._dirty = False
+        self._save_timer = None
+        self._save_delay = 0.3  # 300ms debounce delay
+    
+    def _schedule_save(self):
+        """Schedule a debounced save operation."""
+        self._dirty = True
+        if self._save_timer is not None:
+            self._save_timer.cancel()
+        self._save_timer = threading.Timer(self._save_delay, self._debounced_save)
+        self._save_timer.daemon = True
+        self._save_timer.start()
+    
+    def _debounced_save(self):
+        """Execute the actual save after debounce delay."""
+        if self._dirty:
+            self._save_index()
+            self._dirty = False
+    
+    def flush(self):
+        """Force immediate save if there are pending changes."""
+        if self._save_timer is not None:
+            self._save_timer.cancel()
+            self._save_timer = None
+        if self._dirty:
+            self._save_index()
+            self._dirty = False
     
     def initialize(self) -> bool:
         """Initialize the VFS structure."""
@@ -276,7 +304,7 @@ Enjoy your GlassOS experience! 💎
                     parent.children.append(path)
             
             self._update_search_index(node)
-            self._save_index()
+            self._schedule_save()
             return True
     
     def create_file(self, path: str, content: str = "") -> bool:
@@ -313,7 +341,7 @@ Enjoy your GlassOS experience! 💎
                     parent.children.append(path)
             
             self._update_search_index(node)
-            self._save_index()
+            self._schedule_save()
             return True
     
     def read_file(self, path: str) -> Optional[str]:
@@ -354,7 +382,7 @@ Enjoy your GlassOS experience! 💎
             # Delete the node
             del self._nodes[path]
             
-            self._save_index()
+            self._schedule_save()
             return True
     
     def list_directory(self, path: str) -> List[VFSNode]:
@@ -437,7 +465,7 @@ Enjoy your GlassOS experience! 💎
                 self._update_children_paths(node, old_path, new_path)
             
             self._update_search_index(node)
-            self._save_index()
+            self._schedule_save()
             return True
     
     def _update_children_paths(self, node: VFSNode, old_base: str, new_base: str):

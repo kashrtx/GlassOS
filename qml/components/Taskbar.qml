@@ -10,9 +10,31 @@ Rectangle {
     signal appClicked(string appName)
     signal taskbarAppClicked(var window)
     signal taskbarAppClosed(var window)
+    signal closeAllWindowsOfType(string appTitle)  // Batch termination signal
     
     property var runningWindows: []
     property int volumeLevel: Storage.systemVolume // Bind to system volume
+    
+    // Batch close all windows of a specific app type
+    function closeWindowGroup(windowList) {
+        // Snapshot the list to avoid mutation during iteration
+        var windowsToClose = windowList.slice()
+        
+        // Use a timer to close windows sequentially to avoid race conditions
+        var closeNext = function() {
+            if (windowsToClose.length > 0) {
+                var win = windowsToClose.shift()
+                if (win && typeof win.destroy === 'function') {
+                    taskbar.taskbarAppClosed(win)
+                }
+            }
+        }
+        
+        // Close all at once via signal emissions
+        for (var i = 0; i < windowsToClose.length; i++) {
+            taskbar.taskbarAppClosed(windowsToClose[i])
+        }
+    }
     
     // Group windows logic
     function getGroupedApps() {
@@ -273,11 +295,10 @@ Rectangle {
                             id: closeAllMouse
                             anchors.fill: parent
                             hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                // Close all windows in this group
-                                var wins = []
-                                for(var i=0; i<modelData.windows.length; i++) wins.push(modelData.windows[i])
-                                for(var j=0; j<wins.length; j++) taskbar.taskbarAppClosed(wins[j])
+                                // Use batch close to terminate all windows of this group
+                                taskbar.closeWindowGroup(modelData.windows)
                                 taskbarContextMenu.close()
                             }
                         }
@@ -509,39 +530,41 @@ Rectangle {
                     id: volMouse
                     anchors.fill: parent
                     hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
                     onClicked: volPopup.opened ? volPopup.close() : volPopup.open()
                 }
                 
                 Popup {
                     id: volPopup
-                    y: -height - 12
-                    x: -width + parent.width + 5
-                    width: 200
-                    height: 50
+                    y: -height - 10  // Just above taskbar
+                    x: parent.width - width  // Right-align
+                    width: 220
+                    height: 60
                     modal: false
                     focus: true
                     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
                     
                     background: Rectangle {
-                        color: Qt.rgba(0.1, 0.12, 0.18, 0.95); radius: 8
+                        color: Qt.rgba(0.1, 0.12, 0.18, 0.95); radius: 10
                         border.width: 1; border.color: Qt.rgba(0.4, 0.6, 0.9, 0.3)
                         
                         // Shadow
                         Rectangle {
-                            anchors.fill: parent; anchors.margins: -4; z: -1; radius: 12; color: Qt.rgba(0,0,0,0.5)
+                            anchors.fill: parent; anchors.margins: -6; z: -1; radius: 14; color: Qt.rgba(0,0,0,0.5)
                         }
                     }
                     
-                    RowLayout {
+                    contentItem: RowLayout {
                         anchors.fill: parent
-                        anchors.margins: 12
-                        spacing: 12
+                        anchors.margins: 16
+                        spacing: 14
                         
-                        Text { text: "🔊"; font.pixelSize: 14; color: "#fff" }
+                        Text { text: "🔊"; font.pixelSize: 16; color: "#fff" }
                         
                         Slider {
                             id: volSlider
                             Layout.fillWidth: true
+                            Layout.preferredHeight: 24
                             from: 0; to: 100
                             value: volumeLevel
                             onMoved: Storage.setSystemVolume(value)
@@ -549,37 +572,50 @@ Rectangle {
                             background: Rectangle {
                                 x: volSlider.leftPadding
                                 y: volSlider.topPadding + volSlider.availableHeight / 2 - height / 2
-                                implicitWidth: 200
-                                implicitHeight: 4
+                                implicitWidth: 140
+                                implicitHeight: 6
                                 width: volSlider.availableWidth
-                                height: implicitHeight
-                                radius: 2
-                                color: Qt.rgba(1,1,1,0.1)
+                                height: 6
+                                radius: 3
+                                color: Qt.rgba(1,1,1,0.15)
                                 
                                 Rectangle {
                                     width: volSlider.visualPosition * parent.width
                                     height: parent.height
                                     color: "#4a9eff"
-                                    radius: 2
+                                    radius: 3
                                 }
                             }
                             
                             handle: Rectangle {
                                 x: volSlider.leftPadding + volSlider.visualPosition * (volSlider.availableWidth - width)
                                 y: volSlider.topPadding + volSlider.availableHeight / 2 - height / 2
-                                implicitWidth: 14
-                                implicitHeight: 14
-                                radius: 7
+                                implicitWidth: 16
+                                implicitHeight: 16
+                                radius: 8
                                 color: volSlider.pressed ? "#fff" : "#eee"
-                                border.width: 1
+                                border.width: 2
                                 border.color: "#4a9eff"
+                                
+                                // Glow on press
+                                Rectangle {
+                                    visible: volSlider.pressed
+                                    anchors.centerIn: parent
+                                    width: parent.width + 8
+                                    height: parent.height + 8
+                                    radius: width / 2
+                                    color: "transparent"
+                                    border.width: 2
+                                    border.color: Qt.rgba(0.3, 0.6, 1, 0.5)
+                                }
                             }
                         }
                         
                         Text { 
                             text: Math.round(volumeLevel)
-                            color: "#fff"; font.pixelSize: 11; font.bold: true
-                            Layout.preferredWidth: 25
+                            color: "#fff"; font.pixelSize: 13; font.bold: true
+                            Layout.preferredWidth: 30
+                            horizontalAlignment: Text.AlignRight
                         }
                     }
                 }

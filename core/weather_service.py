@@ -104,7 +104,11 @@ class WeatherWorker(QObject):
         
         # Build forecast
         forecast = []
-        days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+        # weekday() returns Monday=0, Sunday=6, so order accordingly
+        days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        
+        # Import once outside the loop for efficiency
+        from datetime import datetime as dt
         
         if daily.get("time"):
             for i in range(min(7, len(daily["time"]))):
@@ -113,8 +117,7 @@ class WeatherWorker(QObject):
                 
                 # Get day name from date
                 date_str = daily["time"][i]
-                from datetime import datetime
-                date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+                date_obj = dt.strptime(date_str, "%Y-%m-%d")
                 day_name = days[date_obj.weekday()]
                 
                 forecast.append({

@@ -24,6 +24,7 @@ class AdBlocker(QWebEngineUrlRequestInterceptor):
         self._blocked_domains: Set[str] = set()
         self._blocked_patterns: List[re.Pattern] = []
         self._whitelist: Set[str] = set()
+        self._domain_cache: dict = {}  # Cache for fast repeated lookups
         
         # Load default block lists
         self._load_default_blocklist()
@@ -196,42 +197,55 @@ class AdBlocker(QWebEngineUrlRequestInterceptor):
             return
         
         url = info.requestUrl()
-        url_string = url.toString().lower()
         host = url.host().lower()
         
-        # Check whitelist first
+        # Fast path: Check domain cache first
+        if host in self._domain_cache:
+            if self._domain_cache[host]:
+                info.block(True)
+                self._blocked_count += 1
+            return
+        
+        # Check whitelist first (quick rejection)
         for domain in self._whitelist:
             if domain in host:
+                self._domain_cache[host] = False
                 return
         
-        # Check blocked domains
+        # Efficient domain check using suffix matching
         should_block = False
         
-        for blocked_domain in self._blocked_domains:
-            if blocked_domain in host:
+        # Split host into parts for suffix checking
+        # e.g., "ads.doubleclick.net" -> check "doubleclick.net", then "net"
+        parts = host.split('.')
+        for i in range(len(parts)):
+            suffix = '.'.join(parts[i:])
+            if suffix in self._blocked_domains:
                 should_block = True
                 break
         
-        # Check URL patterns if not already blocked
+        # Check URL patterns only if not already blocked (lazy evaluation)
         if not should_block:
+            url_string = url.toString().lower()
             for pattern in self._blocked_patterns:
                 if pattern.search(url_string):
                     should_block = True
                     break
         
-        # Block third-party scripts that look like trackers
+        # Block third-party tracking pixels (only for images, cheap check)
         if not should_block:
             resource_type = info.resourceType()
-            # Block third-party tracking pixels and beacons
             if resource_type == QWebEngineUrlRequestInfo.ResourceTypeImage:
-                if any(x in url_string for x in ['track', 'pixel', 'beacon', 'imp.', '1x1', 'spacer']):
+                url_string = url.toString().lower() if 'url_string' not in dir() else url_string
+                if any(x in url_string for x in ('track', 'pixel', 'beacon', '1x1')):
                     should_block = True
+        
+        # Cache the result for this host
+        self._domain_cache[host] = should_block
         
         if should_block:
             info.block(True)
             self._blocked_count += 1
-            # Uncomment for debugging:
-            # print(f"🛡️ Blocked: {url_string[:80]}...")
     
     @property
     def enabled(self) -> bool:

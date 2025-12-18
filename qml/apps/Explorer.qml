@@ -347,7 +347,7 @@ Rectangle {
             width: parent.width - 12
             text: "Paste"
             icon: "📋"
-            enabled: currentPath !== "/Recycle Bin" && Storage.clipboardPath !== ""
+            enabled: currentPath !== "/Recycle Bin" && explorer.hasClipboard
             onClicked: { 
                 bgContextMenu.hide()
                 if (Storage.paste(currentPath)) {
@@ -357,20 +357,52 @@ Rectangle {
         }
     }
     
-    // Keyboard shortcuts
+    // Track clipboard for reactive paste button
+    property bool hasClipboard: Storage.clipboardPath !== ""
+    
+    Connections {
+        target: Storage
+        function onClipboardChanged() {
+            hasClipboard = Storage.clipboardPath !== ""
+        }
+    }
+    
+    // Keyboard shortcuts - on the main explorer for reliable focus
+    focus: true
+    Keys.forwardTo: [keyHandler]
+    
     Item {
-        focus: true
+        id: keyHandler
         Keys.onPressed: function(event) {
             if (event.modifiers & Qt.ControlModifier) {
                 if (event.key === Qt.Key_C && selectedFile) {
+                    console.log("✂ Copy in Explorer:", selectedFile.path)
                     Storage.setClipboard(selectedFile.path, "copy")
+                    event.accepted = true
                 } else if (event.key === Qt.Key_X && selectedFile) {
+                    console.log("✂ Cut in Explorer:", selectedFile.path)
                     Storage.setClipboard(selectedFile.path, "cut")
-                } else if (event.key === Qt.Key_V && currentPath !== "/Recycle Bin") {
+                    event.accepted = true
+                } else if (event.key === Qt.Key_V && currentPath !== "/Recycle Bin" && hasClipboard) {
+                    console.log("📋 Paste in Explorer to:", currentPath)
                     if (Storage.paste(currentPath)) loadFolder(currentPath)
+                    event.accepted = true
                 } else if (event.key === Qt.Key_R) {
                     loadFolder(currentPath)
+                    event.accepted = true
                 }
+            } else if (event.key === Qt.Key_Delete && selectedFile) {
+                if (currentPath === "/Recycle Bin") {
+                    Storage.deleteItem(selectedFile.path)
+                } else {
+                    Storage.moveToTrash(selectedFile.path)
+                }
+                loadFolder(currentPath)
+                selectedFile = null
+                event.accepted = true
+            } else if (event.key === Qt.Key_F5) {
+                loadFolder(currentPath)
+                event.accepted = true
             }
         }
     }

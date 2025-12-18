@@ -13,9 +13,15 @@ Item {
     property real menuY: 0
     
     property var icons: []
+    property int dragHoverTarget: -1  // Index of icon being hovered during drag
+    
+    // Track clipboard state for Paste button reactivity
+    property bool hasClipboard: Storage.clipboardPath !== ""
     
     Component.onCompleted: {
         refreshIcons()
+        // Initialize clipboard state
+        hasClipboard = Storage.clipboardPath !== ""
     }
     
     // Listen for file system changes (e.g. valid delete from Recycle Bin)
@@ -24,6 +30,10 @@ Item {
         function onDesktopUpdated() {
             console.log("Desktop updated signal received, refreshing icons...")
             refreshIcons()
+        }
+        function onClipboardChanged() {
+            console.log("Clipboard changed:", Storage.clipboardPath, Storage.clipboardOp)
+            hasClipboard = Storage.clipboardPath !== ""
         }
     }
     
@@ -90,6 +100,56 @@ Item {
         saveIcons()
     }
     
+    // Manual drop target detection - checks if x,y is over a folder or recycle bin
+    function getDropTargetAt(x, y, sourceIndex) {
+        for (var i = 0; i < icons.length; i++) {
+            if (i === sourceIndex) continue // Skip self
+            
+            var icon = icons[i]
+            var iconX = icon.x
+            var iconY = icon.y
+            var iconW = 72
+            var iconH = 80
+            
+            // Check if the point is within this icon's bounds
+            if (x >= iconX && x <= iconX + iconW && y >= iconY && y <= iconY + iconH) {
+                // Is it a valid drop target?
+                if (icon.app === "RecycleBin" || icon.icon === "📁") {
+                    return { 
+                        index: i, 
+                        name: icon.name, 
+                        isTrash: icon.app === "RecycleBin",
+                        isFolder: icon.icon === "📁"
+                    }
+                }
+            }
+        }
+        return null
+    }
+    
+    // Perform the drop action
+    function performDrop(sourceIndex, target) {
+        if (!target) return false
+        
+        var sourcePath = "/Desktop/" + icons[sourceIndex].name
+        
+        if (target.isTrash) {
+            console.log("🗑️ Dropping", sourcePath, "to Recycle Bin")
+            if (Storage.moveToTrash(sourcePath)) {
+                refreshIcons()
+                return true
+            }
+        } else if (target.isFolder) {
+            var destPath = "/Desktop/" + target.name
+            console.log("📁 Dropping", sourcePath, "to folder", destPath)
+            if (Storage.moveItem(sourcePath, destPath)) {
+                refreshIcons()
+                return true
+            }
+        }
+        return false
+    }
+    
     // Unified Desktop MouseArea for Clicks & Drops
     MouseArea {
         id: desktopMouseArea
@@ -97,23 +157,41 @@ Item {
         acceptedButtons: Qt.LeftButton | Qt.RightButton
         focus: true
         
-        // Key handling
+        // Key handling - Ctrl+C, Ctrl+X, Ctrl+V, Delete, F5
         Keys.onPressed: function(event) {
+            console.log("Key pressed:", event.key, "Modifiers:", event.modifiers)
+            
             if (event.modifiers & Qt.ControlModifier) {
                 if (event.key === Qt.Key_C && selectedIndex !== -1) {
+                    console.log("📋 Copy:", icons[selectedIndex].name)
                     Storage.setClipboard("/Desktop/" + icons[selectedIndex].name, "copy")
+                    event.accepted = true
                 } else if (event.key === Qt.Key_X && selectedIndex !== -1) {
+                    console.log("✂ Cut:", icons[selectedIndex].name)
                     Storage.setClipboard("/Desktop/" + icons[selectedIndex].name, "cut")
-                } else if (event.key === Qt.Key_V) {
-                    if (Storage.paste("/Desktop")) { refreshIcons() }
-                } else if (event.key === Qt.Key_R) {
-                    refreshIcons()
+                    event.accepted = true
+                } else if (event.key === Qt.Key_V && root.hasClipboard) {
+                    console.log("📋 Paste to Desktop")
+                    if (Storage.paste("/Desktop")) { 
+                        refreshIcons() 
+                    }
+                    event.accepted = true
+                } else if (event.key === Qt.Key_A) {
+                    // Select first icon
+                    if (icons.length > 0) selectedIndex = 0
+                    event.accepted = true
                 }
             } else if (event.key === Qt.Key_Delete && selectedIndex !== -1) {
+                console.log("🗑 Delete:", icons[selectedIndex].name)
                 if (Storage.moveToTrash("/Desktop/" + icons[selectedIndex].name)) {
                     refreshIcons()
                     selectedIndex = -1
                 }
+                event.accepted = true
+            } else if (event.key === Qt.Key_F5) {
+                console.log("🔄 Refresh")
+                refreshIcons()
+                event.accepted = true
             }
         }
         
@@ -198,48 +276,87 @@ Item {
             // Z-index boost when dragging to ensuring it appears over windows
             z: iconMouse.drag.active ? 100000 : (selectedIndex === index ? 10 : 1)
             
-            // Drag and Drop Meta
+            // Drag and Drop Configuration
             Drag.active: iconMouse.drag.active
             Drag.hotSpot.x: width / 2
             Drag.hotSpot.y: height / 2
-            Drag.mimeData: { "path": (modelData.app === "RecycleBin") ? "/Recycle Bin" : "/Desktop/" + modelData.name, "index": index, "name": modelData.name, "isApp": !!modelData.app }
+            Drag.supportedActions: Qt.MoveAction
+            Drag.dragType: Drag.Internal  // Internal for in-app DnD
+            Drag.keys: ["desktop-icon", "file"]
+            Drag.mimeData: { 
+                "path": (modelData.app === "RecycleBin") ? "/Recycle Bin" : "/Desktop/" + modelData.name, 
+                "index": String(index), 
+                "name": modelData.name, 
+                "isApp": modelData.app ? "true" : "false",
+                "isDir": modelData.icon === "📁" ? "true" : "false"
+            }
+            Drag.source: iconItem
             
-            // DropArea for folders/trash
+            // DropArea for folders/trash - accepts drops from other icons
             DropArea {
                 id: iconDropArea
                 anchors.fill: parent
                 enabled: modelData.app === "RecycleBin" || modelData.icon === "📁"
+                keys: ["desktop-icon", "file"]
+                
+                onContainsDragChanged: {
+                    if (containsDrag) {
+                        console.log("🎯 Drag entered:", modelData.name, "- containsDrag:", containsDrag)
+                    }
+                }
                 
                 onEntered: function(drag) {
+                    console.log("📥 onEntered:", modelData.name, "source:", drag.source)
                     if (drag.source !== iconItem) {
                         iconItem.border.width = 2
-                        iconItem.border.color = "#4a9eff"
+                        iconItem.border.color = modelData.app === "RecycleBin" ? "#ff6666" : "#4a9eff"
+                        iconItem.color = Qt.rgba(0.3, 0.5, 0.8, 0.3)
+                        drag.accept(Qt.MoveAction)
                     }
                 }
                 onExited: {
+                    console.log("📤 onExited:", modelData.name)
                     iconItem.border.width = (selectedIndex === index) ? 1 : 0
                     iconItem.border.color = Qt.rgba(0.4, 0.7, 1, 0.6)
+                    iconItem.color = selectedIndex === index ? Qt.rgba(1, 1, 1, 0.2) : "transparent"
                 }
                 onDropped: function(drop) {
+                    // Reset visual state
+                    iconItem.border.width = (selectedIndex === index) ? 1 : 0
+                    iconItem.border.color = Qt.rgba(0.4, 0.7, 1, 0.6)
+                    iconItem.color = selectedIndex === index ? Qt.rgba(1, 1, 1, 0.2) : "transparent"
+                    
                     var sourcePath = drop.getDataAsString("path")
                     var sourceIndex = parseInt(drop.getDataAsString("index"))
                     
+                    // Don't drop on self
+                    if (drop.source === iconItem) return
+                    
                     if (modelData.app === "RecycleBin") {
+                        console.log("🗑 Dropping to Recycle Bin:", sourcePath)
                         if (Storage.moveToTrash(sourcePath)) {
                             refreshIcons()
                         }
+                        drop.accepted = true
                     } else if (modelData.icon === "📁") {
+                        console.log("📁 Dropping to folder:", modelData.name)
                         if (Storage.moveItem(sourcePath, "/Desktop/" + modelData.name)) {
                             refreshIcons()
                         }
+                        drop.accepted = true
                     }
                 }
             }
             
-            color: selectedIndex === index ? Qt.rgba(1, 1, 1, 0.2) : "transparent"
+            // Highlight when this is a drag hover target
+            property bool isDragTarget: (dragHoverTarget === index) && (modelData.app === "RecycleBin" || modelData.icon === "📁")
             
-            border.width: selectedIndex === index ? 1 : 0
-            border.color: Qt.rgba(0.4, 0.7, 1, 0.6)
+            color: isDragTarget ? Qt.rgba(0.3, 0.5, 0.8, 0.4) : 
+                   (selectedIndex === index ? Qt.rgba(1, 1, 1, 0.2) : "transparent")
+            
+            border.width: isDragTarget ? 2 : (selectedIndex === index ? 1 : 0)
+            border.color: isDragTarget ? (modelData.app === "RecycleBin" ? "#ff6666" : "#4a9eff") : 
+                          Qt.rgba(0.4, 0.7, 1, 0.6)
             
             Column {
                 anchors.centerIn: parent
@@ -275,29 +392,94 @@ Item {
                 hoverEnabled: true
                 drag.target: iconItem
                 drag.axis: Drag.XAndYAxis
-                drag.threshold: 10
+                drag.threshold: 8
                 acceptedButtons: Qt.LeftButton | Qt.RightButton
+                cursorShape: drag.active ? Qt.ClosedHandCursor : (containsMouse ? Qt.PointingHandCursor : Qt.ArrowCursor)
+                
+                property real startX: 0
+                property real startY: 0
+                property bool wasDragged: false
                 
                 onPressed: function(mouse) {
                     // Close menu if clicking elsewhere
                     if (showContextMenu) {
                        showContextMenu = false
-                       // Don't return, let selection happen
                     }
+                    
+                    startX = iconItem.x
+                    startY = iconItem.y
+                    wasDragged = false
                     
                     selectedIndex = index
                     root.forceActiveFocus()
                     if (mouse.button === Qt.RightButton) {
-                        menuX = mouse.x + iconItem.x // Fixed menu pos
+                        menuX = mouse.x + iconItem.x
                         menuY = mouse.y + iconItem.y
                         showContextMenu = true
                     }
                 }
                 
-                onReleased: {
-                    // Logic handled by DropAreas (Background or other icons)
-                    // We do NOT update the model here to avoid race conditions 
-                    // with the DropArea.onDropped (e.g., recycle bin delete)
+                onPositionChanged: {
+                    if (drag.active) {
+                        wasDragged = true
+                        
+                        // Check for hover over drop targets for visual feedback
+                        var centerX = iconItem.x + iconItem.width / 2
+                        var centerY = iconItem.y + iconItem.height / 2
+                        var target = root.getDropTargetAt(centerX, centerY, index)
+                        
+                        // Update visual state of potential target
+                        if (target && target.index !== root.dragHoverTarget) {
+                            root.dragHoverTarget = target.index
+                        } else if (!target && root.dragHoverTarget !== -1) {
+                            root.dragHoverTarget = -1
+                        }
+                    }
+                }
+                
+                onReleased: function(mouse) {
+                    if (wasDragged) {
+                        // Calculate the center of the icon's new position
+                        var centerX = iconItem.x + iconItem.width / 2
+                        var centerY = iconItem.y + iconItem.height / 2
+                        
+                        // Check if we're over a drop target (folder or recycle bin)
+                        var target = root.getDropTargetAt(centerX, centerY, index)
+                        
+                        if (target) {
+                            // Perform the drop action
+                            if (root.performDrop(index, target)) {
+                                // Drop was successful, icons will be refreshed
+                                wasDragged = false
+                                return
+                            }
+                        }
+                        
+                        // No valid target - just move the icon to its new position
+                        // Snap to grid
+                        var grid = 20
+                        var newX = Math.max(16, Math.round(iconItem.x / grid) * grid)
+                        var newY = Math.max(16, Math.round(iconItem.y / grid) * grid)
+                        
+                        // Clamp to screen bounds
+                        newX = Math.min(newX, root.width - iconItem.width - 16)
+                        newY = Math.min(newY, root.height - iconItem.height - 60) // Above taskbar
+                        
+                        // Update model and save
+                        var newIcons = icons.slice()
+                        if (index >= 0 && index < newIcons.length) {
+                            newIcons[index].x = newX
+                            newIcons[index].y = newY
+                            icons = newIcons
+                            root.saveIcons()
+                        }
+                        
+                        // Snap the visual position
+                        iconItem.x = newX
+                        iconItem.y = newY
+                    }
+                    wasDragged = false
+                    root.dragHoverTarget = -1  // Reset hover state
                 }
                 
                 onDoubleClicked: {
@@ -397,11 +579,10 @@ Item {
             
             ContextMenuItem { 
                 text: "Paste"; icon: "📋"
-                enabled: Storage.clipboardPath !== ""
+                enabled: root.hasClipboard
                 onItemClicked: { 
-                    var clipboardPath = Storage.clipboardPath
                     if (Storage.paste("/Desktop")) {
-                        // We refresh everything to see the new item
+                        // Refresh to see the new item
                         refreshIcons()
                     }
                     showContextMenu = false 

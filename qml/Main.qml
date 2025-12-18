@@ -277,7 +277,7 @@ ApplicationWindow {
         }
     }
     
-    // Close a window with animation
+    // Close a window - handles both single and batch closures
     function closeWindow(win) {
         if (!win) return
         
@@ -288,36 +288,45 @@ ApplicationWindow {
             updateTaskbar()
         }
         
-        // Animate out
-        closeAnim.target = win
-        closeAnim.start()
-    }
-    
-    ParallelAnimation {
-        id: closeAnim
-        property var target: null
-        
-        NumberAnimation {
-            target: closeAnim.target
-            property: "opacity"
-            to: 0
-            duration: 150
-            easing.type: Easing.OutCubic
-        }
-        
-        NumberAnimation {
-            target: closeAnim.target
-            property: "scale"
-            to: 0.9
-            duration: 150
-            easing.type: Easing.OutCubic
-        }
-        
-        onFinished: {
-            if (target) {
-                target.destroy()
-                target = null
-            }
+        // For batch closes, destroy immediately to avoid animation queue issues
+        // Each window creates its own animation for smooth closing
+        if (win.opacity !== undefined) {
+            // Create an inline close animation for this specific window
+            var anim = Qt.createQmlObject('
+                import QtQuick
+                ParallelAnimation {
+                    id: inlineCloseAnim
+                    property var targetWin
+                    
+                    NumberAnimation {
+                        target: inlineCloseAnim.targetWin
+                        property: "opacity"
+                        to: 0
+                        duration: 120
+                        easing.type: Easing.OutCubic
+                    }
+                    
+                    NumberAnimation {
+                        target: inlineCloseAnim.targetWin
+                        property: "scale"  
+                        to: 0.95
+                        duration: 120
+                        easing.type: Easing.OutCubic
+                    }
+                    
+                    onFinished: {
+                        if (targetWin) {
+                            targetWin.destroy()
+                        }
+                        inlineCloseAnim.destroy()
+                    }
+                }
+            ', root, "closeAnimation")
+            
+            anim.targetWin = win
+            anim.start()
+        } else {
+            win.destroy()
         }
     }
     
@@ -368,7 +377,7 @@ ApplicationWindow {
                         x: xPos, y: yPos,
                         windowTitle: "Calculator",
                         windowIcon: "🧮",
-                        width: 320, height: 450
+                        width: 420, height: 580
                     })
                     break
                 case "GlassPad":

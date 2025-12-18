@@ -218,82 +218,135 @@ Item {
         anchors.fill: parent
         spacing: 0
         
-        // ===== TAB BAR =====
+        // ===== TAB BAR (Vivaldi-Style) =====
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 32
-            color: Qt.rgba(0.12, 0.14, 0.18, 0.95)
+            Layout.preferredHeight: 38
+            color: Qt.rgba(0.08, 0.09, 0.12, 0.98)
             
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 4
-                anchors.rightMargin: 4
-                spacing: 2
+                anchors.leftMargin: 6
+                anchors.rightMargin: 6
+                spacing: 0
                 
-                // Tab list
+                // Tab list - fills available space
                 ListView {
                     id: tabListView
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     orientation: ListView.Horizontal
-                    spacing: 2
+                    spacing: 1
                     clip: true
                     
                     model: tabModel
                     
                     delegate: Rectangle {
-                        width: Math.min(180, (browserApp.width - 100) / Math.max(1, tabModel.count))
-                        height: 28
-                        radius: 4
+                        id: tabDelegate
+                        width: Math.min(220, Math.max(120, (tabListView.width - 50) / Math.max(1, tabModel.count)))
+                        height: 34
+                        radius: 6
                         
-                        color: index === activeTabIndex 
-                            ? Qt.rgba(0.2, 0.24, 0.32, 1) 
-                            : (tabMouse.containsMouse ? Qt.rgba(0.15, 0.18, 0.24, 1) : "transparent")
+                        property bool isActive: index === activeTabIndex
+                        property bool isHovered: tabMouse.containsMouse
                         
-                        border.width: index === activeTabIndex ? 1 : 0
-                        border.color: Qt.rgba(0.3, 0.5, 0.8, 0.4)
+                        // Tab background with subtle gradient
+                        gradient: Gradient {
+                            GradientStop { position: 0.0; color: isActive ? Qt.rgba(0.18, 0.20, 0.26, 1) : (isHovered ? Qt.rgba(0.14, 0.16, 0.20, 1) : "transparent") }
+                            GradientStop { position: 1.0; color: isActive ? Qt.rgba(0.15, 0.17, 0.22, 1) : "transparent" }
+                        }
+                        
+                        // Top rounded corners for active tab
+                        Rectangle {
+                            visible: isActive
+                            anchors.top: parent.top
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            height: parent.radius
+                            color: Qt.rgba(0.18, 0.20, 0.26, 1)
+                        }
+                        
+                        // Active indicator (colored bottom line)
+                        Rectangle {
+                            anchors.bottom: parent.bottom
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 8
+                            height: 3
+                            radius: 1.5
+                            visible: isActive
+                            color: Theme.accentColor
+                        }
                         
                         RowLayout {
                             anchors.fill: parent
-                            anchors.margins: 6
-                            spacing: 6
+                            anchors.leftMargin: 10
+                            anchors.rightMargin: 6
+                            spacing: 8
                             
-                            // Favicon or loading indicator
-                            Text {
-                                text: model.tabIsLoading ? "⏳" : "🌐"
-                                font.pixelSize: 10
-                                Layout.preferredWidth: 12
+                            // Loading spinner or favicon
+                            Item {
+                                Layout.preferredWidth: 16
+                                Layout.preferredHeight: 16
+                                
+                                // Loading spinner
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "◐"
+                                    font.pixelSize: 14
+                                    color: Theme.accentColor
+                                    visible: model.tabIsLoading
+                                    
+                                    RotationAnimation on rotation {
+                                        from: 0
+                                        to: 360
+                                        duration: 1000
+                                        loops: Animation.Infinite
+                                        running: model.tabIsLoading
+                                    }
+                                }
+                                
+                                // Favicon placeholder
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "🌐"
+                                    font.pixelSize: 12
+                                    visible: !model.tabIsLoading
+                                }
                             }
                             
                             // Tab title
                             Text {
                                 Layout.fillWidth: true
                                 text: model.tabTitle || "New Tab"
-                                font.pixelSize: 11
+                                font.pixelSize: 12
                                 font.family: "Segoe UI"
-                                color: index === activeTabIndex ? "#ffffff" : "#aaaaaa"
+                                font.weight: isActive ? Font.Medium : Font.Normal
+                                color: isActive ? "#ffffff" : "#b0b0b0"
                                 elide: Text.ElideRight
                             }
                             
-                            // Close button
+                            // Close button - more prominent
                             Rectangle {
-                                Layout.preferredWidth: 16
-                                Layout.preferredHeight: 16
-                                radius: 8
-                                color: closeTabMouse.containsMouse ? Qt.rgba(1, 0.3, 0.3, 0.6) : "transparent"
+                                Layout.preferredWidth: 20
+                                Layout.preferredHeight: 20
+                                radius: 10
+                                color: closeTabMouse.containsMouse ? Qt.rgba(0.9, 0.3, 0.3, 0.8) : (isHovered || isActive ? Qt.rgba(1, 1, 1, 0.1) : "transparent")
                                 
                                 Text {
                                     anchors.centerIn: parent
                                     text: "×"
-                                    font.pixelSize: 12
+                                    font.pixelSize: 14
                                     font.bold: true
-                                    color: "#888888"
+                                    color: closeTabMouse.containsMouse ? "#ffffff" : "#888888"
                                 }
                                 
                                 MouseArea {
                                     id: closeTabMouse
                                     anchors.fill: parent
                                     hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
                                     onClicked: closeTab(index)
                                 }
                             }
@@ -302,26 +355,39 @@ Item {
                         MouseArea {
                             id: tabMouse
                             anchors.fill: parent
-                            anchors.rightMargin: 20
+                            anchors.rightMargin: 24
                             hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
                             onClicked: switchTab(index)
+                            
+                            // Double-click to close
+                            onDoubleClicked: closeTab(index)
                         }
                     }
                 }
                 
-                // New tab button
+                // ===== NEW TAB BUTTON - Prominent & Visible =====
                 Rectangle {
-                    Layout.preferredWidth: 28
-                    Layout.preferredHeight: 28
-                    radius: 4
-                    color: newTabMouse.containsMouse ? Qt.rgba(0.2, 0.24, 0.32, 1) : "transparent"
+                    Layout.preferredWidth: 36
+                    Layout.preferredHeight: 32
+                    Layout.leftMargin: 4
+                    radius: 6
+                    
+                    color: newTabMouse.containsMouse 
+                        ? Qt.rgba(0.95, 0.55, 0.15, 0.9)  // Orange on hover
+                        : Qt.rgba(0.2, 0.22, 0.28, 1)
+                    
+                    border.width: 1
+                    border.color: newTabMouse.containsMouse 
+                        ? Qt.rgba(1, 0.7, 0.3, 0.8)
+                        : Qt.rgba(1, 1, 1, 0.1)
                     
                     Text {
                         anchors.centerIn: parent
                         text: "+"
-                        font.pixelSize: 18
+                        font.pixelSize: 22
                         font.bold: true
-                        color: "#888888"
+                        color: newTabMouse.containsMouse ? "#ffffff" : "#cccccc"
                     }
                     
                     MouseArea {
@@ -330,6 +396,20 @@ Item {
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: addNewTab()
+                        
+                        ToolTip.visible: containsMouse
+                        ToolTip.text: "New Tab (Ctrl+T)"
+                        ToolTip.delay: 500
+                    }
+                    
+                    // Subtle glow effect on hover
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: parent.radius
+                        color: "transparent"
+                        border.width: 2
+                        border.color: newTabMouse.containsMouse ? Qt.rgba(1, 0.6, 0.2, 0.3) : "transparent"
+                        visible: newTabMouse.containsMouse
                     }
                 }
             }
@@ -685,7 +765,9 @@ Item {
                         
                         // Store tab index for reference
                         property int myIndex: index
-                        property string myUrl: model.tabUrl
+                        // IMPORTANT: Don't bind to model.tabUrl - it causes refresh loops!
+                        // Only read initial URL, then the WebView manages its own URL
+                        property string initialUrl: model.tabUrl
                         
                         Loader {
                             id: webEngineLoader
@@ -695,18 +777,28 @@ Item {
                             sourceComponent: Component {
                                 WebEngineView {
                                     id: webView
-                                    url: tabContainer.myUrl
+                                    // Set URL only once via Component.onCompleted to avoid binding loops
+                                    // url: tabContainer.initialUrl // DON'T do this - causes loops!
+                                    
+                                    Component.onCompleted: {
+                                        // Load initial URL only once
+                                        url = tabContainer.initialUrl
+                                    }
                                     
                                     // Zoom level
                                     zoomFactor: browserSettings.zoomLevel
                                     
-                                    // Settings
+                                    // Performance & Compatibility Settings
                                     settings.javascriptEnabled: browserSettings.enableJavaScript
                                     settings.autoLoadImages: true
                                     settings.pluginsEnabled: true
                                     settings.fullScreenSupportEnabled: true
                                     settings.localStorageEnabled: true
                                     settings.webGLEnabled: true
+                                    settings.accelerated2dCanvasEnabled: true
+                                    settings.webRTCPublicInterfacesOnly: false
+                                    settings.playbackRequiresUserGesture: false
+                                    settings.pdfViewerEnabled: true
                                     
                                     onLoadingChanged: function(loadRequest) {
                                         // Update this tab's loading state

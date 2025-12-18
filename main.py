@@ -35,7 +35,22 @@ os.environ["QT_IMAGEIO_MAXALLOC"] = "512"  # MB limit for image allocations
 os.environ["QT_QUICK_CONTROLS_STYLE"] = "Basic"
 
 # WebEngine multi-process mode for better browser performance
-os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--enable-features=UseSkiaRenderer --disable-gpu-vsync"
+# Enable full hardware acceleration and GPU optimizations
+os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = " ".join([
+    "--enable-features=UseSkiaRenderer,VaapiVideoDecoder",
+    "--enable-gpu-rasterization",
+    "--enable-zero-copy",
+    "--enable-accelerated-2d-canvas",
+    "--enable-accelerated-video-decode",
+    "--enable-native-gpu-memory-buffers",
+    "--disable-gpu-vsync",
+    "--disable-background-timer-throttling",
+    "--disable-renderer-backgrounding",
+    "--disable-backgrounding-occluded-windows",
+    "--enable-smooth-scrolling",
+    "--num-raster-threads=4",
+    "--ignore-gpu-blocklist",
+])
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent
