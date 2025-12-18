@@ -27,7 +27,7 @@
 
 GlassOS is a desktop environment simulation built entirely in Python using PySide6 (Qt for Python). It provides a Windows-inspired user interface with a modern, glass-like aesthetic.
 
-The goal of this project is to demonstrate that it's possible to create a functional, visually appealing desktop environment using Python — making it accessible for learning, experimentation, and customization.
+The goal of this project is to demonstrate that it's possible to create a functional, visually appealing desktop environment using Python, making it accessible for learning, experimentation, and customization.
 
 ### ✨ Key Features
 
@@ -192,7 +192,7 @@ Contributions are welcome! This project is open for anyone to improve.
 
 Since this is a beta project built for demonstration purposes:
 
-- This is **not a real operating system** — it runs as a Python application
+- This is **not a real operating system**, it runs as a Python application
 - Some features may be incomplete or have bugs
 - Performance may vary depending on your system
 - The virtual file system is separate from your actual files
@@ -202,7 +202,7 @@ Since this is a beta project built for demonstration purposes:
 
 ## 📜 License
 
-This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
+This project is licensed under the **MIT License**, see the [LICENSE](LICENSE) file for details.
 
 You are free to:
 - ✅ Use this code for any purpose
@@ -217,6 +217,7 @@ You are free to:
 - Inspired by **Windows 11** and modern desktop environments
 - Built with [PySide6](https://wiki.qt.io/Qt_for_Python) (Qt for Python)
 - Weather data from [Open-Meteo](https://open-meteo.com/) (free, no API key needed)
+- I do not own the wallpapers, credit goes to their respective owners.
 
 ---
 
@@ -231,8 +232,7 @@ If you have questions, suggestions, or just want to say hi:
 
 <div align="center">
 
-**Made with ❤️ and Python**
 
-*GlassOS is a learning project — not perfect, but hopefully useful!*
+*GlassOS is a demo project, not perfect, but interesting!*
 
 </div>
