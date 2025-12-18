@@ -8,9 +8,10 @@
 ![Qt](https://img.shields.io/badge/Qt-6.x-green?logo=qt&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 ![Status](https://img.shields.io/badge/Status-Beta-orange)
+![Views](https://api.visitorbadge.io/api/combined?path=KashRTX.GlassOS&labelColor=%23555555&countColor=%232631ef&style=flat)
     <div align="center">
         <img alt="Visitor Stats" 
-            src="https://widgetbite.com/stats/<kashrtx>"/>  
+            src="https://widgetbite.com/stats/kashrtx"/>  
     </div>
 
 *A lightweight, customizable desktop environment inspired by modern operating systems*
