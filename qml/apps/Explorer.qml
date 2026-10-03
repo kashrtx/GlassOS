@@ -1,1764 +1,1066 @@
-// GlassOS File Explorer - Windows 11 Style with Details Pane
-// Complete overhaul with navigation tree, toolbar, search, views, and details pane
 import QtQuick
-import QtQuick.Layouts
 import QtQuick.Controls
+import QtQuick.Layouts
+import "../ui"
+import "../components"
 
-Rectangle {
-    id: explorer
-    color: "transparent"
-    
-    // ===== STATE =====
-    property string currentPath: "/"
+FocusScope {
+    id: ex
+    property var hostWindow: null
     property string initialPath: "/"
-    property var files: []
-    property var selectedFile: null
-    property var selectedFiles: []  // Multiple selection support
-    property string viewMode: "grid"  // "grid" or "details"
-    property bool showDetailsPane: true
-    property bool showCheckboxes: false  // Checkbox selection mode
-    property string searchQuery: ""
-    property var navigationHistory: []
+    property string initialArchive: ""
+    property string initialSelect: ""
+
+    property string path: "/"
+    property var history: []
     property int historyIndex: -1
-    property int lastSelectedIndex: -1  // For shift+click range selection
-    
-    // ===== SELECTION HELPERS =====
-    function isFileSelected(file) {
-        for (var i = 0; i < selectedFiles.length; i++) {
-            if (selectedFiles[i].path === file.path) return true
-        }
-        return false
+    property var entries: []
+    property var shown: []
+    property string filter: ""
+    property string viewMode: Prefs.value("explorer.view", "grid")
+    property string sortKey: "name"
+    property bool sortDesc: false
+    property var selected: ({})
+    property int anchorIndex: -1
+    property string lastReloadPath: ""
+    property bool showDetails: Prefs.value("explorer.details", true) !== false
+    readonly property bool inTrash: path === "/Recycle Bin"
+    readonly property int selectedCount: Object.keys(selected).length
+    readonly property string dropTargetDir: path      // used by GlassWindow for drops on the title bar
+    readonly property var wm: UI.wm
+    // paths currently "cut" - one shared lookup instead of a Python call per delegate
+    readonly property var cutSet: {
+        var m = {}
+        if (Storage.clipboardMode === "cut") Storage.clipboardPaths.forEach(function (p) { m[p] = true })
+        return m
     }
-    
-    function toggleFileSelection(file) {
-        var newSelection = selectedFiles.slice()
-        var idx = -1
-        for (var i = 0; i < newSelection.length; i++) {
-            if (newSelection[i].path === file.path) { idx = i; break }
-        }
-        if (idx >= 0) {
-            newSelection.splice(idx, 1)
-        } else {
-            newSelection.push(file)
-        }
-        selectedFiles = newSelection
-        selectedFile = newSelection.length > 0 ? newSelection[newSelection.length - 1] : null
+
+    Component.onCompleted: {
+        navigate(Storage.isDir(initialPath) ? initialPath : "/")
+        if (initialArchive) archiveView.openArchive(initialArchive)
+        if (initialSelect) selectPath(initialSelect)
     }
-    
-    function selectFile(file, addToSelection) {
-        if (addToSelection) {
-            toggleFileSelection(file)
-        } else {
-            selectedFiles = [file]
-            selectedFile = file
-        }
+    function openWithMenu(e, item) {
+        var items = [{ text: "GlassPad", icon: "app-notepad", action: function () { wm.openApp("GlassPad", { filePath: e.path }) } }]
+        if (e.kind === "image") items.unshift({ text: "Photos", icon: "app-photos", action: function () { wm.openApp("ImageViewer", { filePath: e.path }) } })
+        if (e.kind === "audio" || e.kind === "video" || e.kind === "playlist") items.unshift({ text: "Media Player", icon: "app-media", action: function () { wm.openApp("MediaPlayer", { filePath: e.path }) } })
+        if (HasWebEngine) items.push({ text: "AeroBrowser", icon: "app-browser", action: function () { wm.openApp("AeroBrowser", { initialUrl: Storage.fileUrl(e.path) }) } })
+        menu.show(item, 0, item.height, items)
     }
-    
-    function selectAll() {
-        var filtered = getFilteredFiles()
-        selectedFiles = filtered.slice()
-        selectedFile = filtered.length > 0 ? filtered[filtered.length - 1] : null
-    }
-    
-    function clearSelection() {
-        selectedFiles = []
-        selectedFile = null
-    }
-    
-    function getSelectedCount() {
-        return selectedFiles.length
-    }
-    
-    onInitialPathChanged: loadFolder(initialPath)
-    
-    signal openFileRequest(string path, string name, bool isImage, bool isText)
-    signal setAsWallpaper(string path)
-    signal openWithApp(string path, string appName)
-    
-    // Navigation tree structure
-    property var navTree: [
-        { name: "Desktop", path: "/", icon: "🖥", expanded: false, children: [] },
-        { name: "Documents", path: "/Documents", icon: "📄", expanded: false, children: [] },
-        { name: "Downloads", path: "/Downloads", icon: "⬇", expanded: false, children: [] },
-        { name: "Pictures", path: "/Pictures", icon: "🖼", expanded: false, children: [] },
-        { name: "Videos", path: "/Videos", icon: "🎬", expanded: false, children: [] },
-        { name: "Apps", path: "/Apps", icon: "📦", expanded: false, children: [] },
-        { name: "Recycle Bin", path: "/Recycle Bin", icon: "🗑", expanded: false, children: [] }
-    ]
-    
-    Component.onCompleted: loadFolder(currentPath)
-    
-    // ===== FILE OPERATIONS =====
-    function loadFolder(path, addToHistory) {
-        // Hide any open context menus
-        fileContextMenu.visible = false
-        bgContextMenu.visible = false
-        
-        if (addToHistory !== false && path !== currentPath) {
-            // Add to history
-            if (historyIndex < navigationHistory.length - 1) {
-                navigationHistory = navigationHistory.slice(0, historyIndex + 1)
-            }
-            navigationHistory.push(currentPath)
-            historyIndex = navigationHistory.length - 1
-        }
-        
-        currentPath = path
-        files = Storage.listDirectory(path)
-        selectedFile = null
-        selectedFiles = []
-        searchQuery = ""
-    }
-    
-    function goBack() {
-        if (historyIndex > 0) {
-            historyIndex--
-            loadFolder(navigationHistory[historyIndex], false)
-        }
-    }
-    
-    function goForward() {
-        if (historyIndex < navigationHistory.length - 1) {
-            historyIndex++
-            loadFolder(navigationHistory[historyIndex], false)
-        }
-    }
-    
-    function goUp() {
-        if (currentPath !== "/") {
-            var parts = currentPath.split("/").filter(function(p) { return p !== "" })
-            parts.pop()
-            var newPath = "/" + parts.join("/")
-            if (newPath === "") newPath = "/"
-            loadFolder(newPath)
-        }
-    }
-    
-    function getFileExtension(name) {
-        var parts = name.split('.')
-        return parts.length > 1 ? '.' + parts[parts.length - 1].toLowerCase() : ''
-    }
-    
-    function isTextFile(name) {
-        var ext = getFileExtension(name)
-        var textExts = [".txt", ".md", ".json", ".xml", ".html", ".css", ".js", ".py", 
-                        ".qml", ".log", ".ini", ".cfg", ".yaml", ".yml", ".csv", ".sh", 
-                        ".bat", ".ps1", ".conf", ".gitignore", ".env"]
-        return textExts.indexOf(ext) !== -1
-    }
-    
-    function isImageFile(name) {
-        var ext = getFileExtension(name)
-        return [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".ico"].indexOf(ext) !== -1
-    }
-    
-    function getFileIcon(file) {
-        if (file.isDirectory) return "📁"
-        if (file.isImage || isImageFile(file.name)) return "🖼"
-        
-        var ext = getFileExtension(file.name)
-        var icons = {
-            ".py": "🐍", ".js": "📜", ".qml": "📜",
-            ".json": "📋", ".xml": "📋", ".html": "🌐",
-            ".mp4": "🎬", ".mp3": "🎵", ".wav": "🎵",
-            ".zip": "📦", ".pdf": "📕", ".md": "📝"
-        }
-        return icons[ext] || "📄"
-    }
-    
-    function getFileType(file) {
-        if (file.isDirectory) return "Folder"
-        var ext = getFileExtension(file.name)
-        var types = {
-            ".txt": "Text Document", ".md": "Markdown", ".json": "JSON File",
-            ".js": "JavaScript", ".py": "Python Script", ".qml": "QML File",
-            ".html": "HTML Document", ".css": "CSS Stylesheet",
-            ".jpg": "JPEG Image", ".jpeg": "JPEG Image", ".png": "PNG Image",
-            ".gif": "GIF Image", ".bmp": "Bitmap", ".webp": "WebP Image",
-            ".mp4": "Video", ".mp3": "Audio", ".pdf": "PDF Document"
-        }
-        return types[ext] || "File"
-    }
-    
-    function formatFileSize(bytes) {
-        if (bytes === 0) return "—"
-        if (bytes < 1024) return bytes + " B"
-        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB"
-        if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + " MB"
-        return (bytes / (1024 * 1024 * 1024)).toFixed(2) + " GB"
-    }
-    
-    function openFile(file) {
-        if (file.isDirectory) {
-            loadFolder(file.path)
+    function selectPath(p) {
+        for (var i = 0; i < shown.length; i++) if (shown[i].path === p) {
+            var s = {}; s[p] = true; selected = s; anchorIndex = i
+            Qt.callLater(function () { if (viewMode === "grid") grid.positionViewAtIndex(i, GridView.Contain); else list.positionViewAtIndex(i, ListView.Contain) })
             return
         }
-        
-        if (file.isImage || isImageFile(file.name)) {
-            explorer.openFileRequest(file.path, file.name, true, false)
-        } else {
-            explorer.openFileRequest(file.path, file.name, false, true)
-        }
     }
-    
-    function createNewFolder() {
-        newItemDialog.isFolder = true
-        newItemDialog.visible = true
-        newItemInput.text = "New Folder"
-        newItemInput.selectAll()
-        newItemInput.forceActiveFocus()
+    function handleArgs(props) {
+        if (props.initialPath && Storage.isDir(props.initialPath)) navigate(props.initialPath)
+        if (props.initialArchive) archiveView.openArchive(props.initialArchive)
+        if (props.initialSelect) selectPath(props.initialSelect)
     }
-    
-    function createNewFile() {
-        newItemDialog.isFolder = false
-        newItemDialog.visible = true
-        newItemInput.text = "New File.txt"
-        newItemInput.selectAll()
-        newItemInput.forceActiveFocus()
+    function sessionState() { return { initialPath: path } }
+    function extractArchive(p) { Storage.startTransfer("extract", [p], Storage.parentOf(p)) }
+    function compressSelection() {
+        var paths = selectedPaths()
+        if (paths.length && !inTrash) Storage.startTransfer("compress", paths, path)
     }
-    
-    function getPathBreadcrumbs() {
-        if (currentPath === "/") return [{ name: "Storage", path: "/" }]
-        var parts = currentPath.split("/").filter(function(p) { return p !== "" })
-        var crumbs = [{ name: "Storage", path: "/" }]
-        var buildPath = ""
-        for (var i = 0; i < parts.length; i++) {
-            buildPath += "/" + parts[i]
-            crumbs.push({ name: parts[i], path: buildPath })
-        }
-        return crumbs
-    }
-    
-    // Filter files by search
-    function getFilteredFiles() {
-        if (!searchQuery || searchQuery.trim() === "") return files
-        var q = searchQuery.toLowerCase()
-        return files.filter(function(f) {
-            return f.name.toLowerCase().indexOf(q) !== -1
-        })
-    }
-    
-    // Track clipboard for reactive paste button
-    property bool hasClipboard: Storage.clipboardPath !== ""
-    
+
     Connections {
         target: Storage
-        function onClipboardChanged() {
-            hasClipboard = Storage.clipboardPath !== ""
+        function onChanged(dir) {
+            if (!Storage.isDir(ex.path)) ex.navigate(Storage.isDir(Storage.parentOf(ex.path)) ? Storage.parentOf(ex.path) : "/")
+            else if (dir === ex.path) ex.reload()
         }
     }
-    
-    // ===== CLICK OUTSIDE TO CLOSE MENUS =====
-    MouseArea {
-        anchors.fill: parent
-        z: 50
-        visible: fileContextMenu.visible || bgContextMenu.visible
-        onClicked: {
-            fileContextMenu.visible = false
-            bgContextMenu.visible = false
+
+    // ------------------------------------------------------------ navigation
+    function navigate(p, fromHistory) {
+        if (!Storage.isDir(p)) {
+            wm.notify("Folder not found", p, "warning-color")
+            if (!Storage.isDir(path)) navigate("/")   // the folder we were in vanished too
+            return
         }
-    }
-    
-    // ===== KEYBOARD SHORTCUTS =====
-    focus: true
-    Keys.onPressed: function(event) {
-        if (event.modifiers & Qt.ControlModifier) {
-            if (event.key === Qt.Key_A) {
-                // Select all
-                selectAll()
-                event.accepted = true
-            } else if (event.key === Qt.Key_C && selectedFiles.length > 0) {
-                Storage.setClipboard(selectedFile.path, "copy")
-                event.accepted = true
-            } else if (event.key === Qt.Key_X && selectedFiles.length > 0) {
-                Storage.setClipboard(selectedFile.path, "cut")
-                event.accepted = true
-            } else if (event.key === Qt.Key_V && currentPath !== "/Recycle Bin" && hasClipboard) {
-                if (Storage.paste(currentPath)) loadFolder(currentPath)
-                event.accepted = true
-            } else if (event.key === Qt.Key_R) {
-                loadFolder(currentPath)
-                event.accepted = true
-            }
-        } else if (event.key === Qt.Key_Delete && selectedFiles.length > 0) {
-            // Delete all selected files
-            for (var i = 0; i < selectedFiles.length; i++) {
-                if (currentPath === "/Recycle Bin") {
-                    Storage.deleteItem(selectedFiles[i].path)
-                } else {
-                    Storage.moveToTrash(selectedFiles[i].path)
-                }
-            }
-            loadFolder(currentPath)
-            event.accepted = true
-        } else if (event.key === Qt.Key_F5) {
-            loadFolder(currentPath)
-            event.accepted = true
-        } else if (event.key === Qt.Key_Backspace && currentPath !== "/") {
-            goUp()
-            event.accepted = true
-        } else if (event.key === Qt.Key_Escape) {
-            clearSelection()
-            event.accepted = true
+        path = p
+        if (!fromHistory) {
+            var h = history.slice(0, historyIndex + 1)
+            h.push(p)
+            history = h
+            historyIndex = h.length - 1
         }
+        filter = ""
+        searchField.text = ""
+        selected = {}
+        anchorIndex = -1
+        reload()
+        if (hostWindow) hostWindow.title = (p === "/" ? "Home" : p.split("/").pop()) + " — Files"
+        Storage.watch(p)   // live refresh when the folder changes, even from outside GlassOS
     }
-    
-    // ===== MAIN LAYOUT =====
-    RowLayout {
+    function back() { if (historyIndex > 0) { historyIndex--; navigate(history[historyIndex], true) } }
+    function forward() { if (historyIndex < history.length - 1) { historyIndex++; navigate(history[historyIndex], true) } }
+    function up() { if (path !== "/") navigate(Storage.parentOf(path)) }
+
+    // Re-reads the folder. Keeps the scroll position when the folder itself didn't
+    // change (rename, paste, delete...), instead of jumping back to the top.
+    function reload() {
+        var keepY = viewMode === "grid" ? grid.contentY : list.contentY
+        var samePath = lastReloadPath === path
+        lastReloadPath = path
+        entries = Storage.list(path)
+        applyView()
+        if (samePath) Qt.callLater(function () {
+            var v = viewMode === "grid" ? grid : list
+            v.contentY = Math.max(0, Math.min(keepY, v.contentHeight - v.height))
+        })
+    }
+
+    function applyView() {
+        var q = filter.toLowerCase()
+        var list = q ? entries.filter(function (e) { return e.name.toLowerCase().indexOf(q) >= 0 }) : entries.slice()
+        var key = sortKey, dir = sortDesc ? -1 : 1
+        list.sort(function (a, b) {
+            if (a.isDir !== b.isDir) return a.isDir ? -1 : 1
+            var va = key === "name" ? a.name.toLowerCase() : key === "kind" ? a.kind : key === "size" ? a.size : (inTrash ? a.deletedAt : a.modified)
+            var vb = key === "name" ? b.name.toLowerCase() : key === "kind" ? b.kind : key === "size" ? b.size : (inTrash ? b.deletedAt : b.modified)
+            return va < vb ? -dir : va > vb ? dir : 0
+        })
+        shown = list
+        var keep = {}
+        for (var i = 0; i < list.length; i++) if (selected[list[i].path]) keep[list[i].path] = true
+        selected = keep
+    }
+    onFilterChanged: applyView()
+    function setSort(k) { if (sortKey === k) sortDesc = !sortDesc; else { sortKey = k; sortDesc = false }; applyView() }
+    function setView(m) { viewMode = m; Prefs.setValue("explorer.view", m) }
+
+    // ------------------------------------------------------------ selection
+    function clickItem(index, mods) {
+        var e = shown[index], s
+        if (mods & Qt.ShiftModifier && anchorIndex >= 0) {
+            s = (mods & Qt.ControlModifier) ? Object.assign({}, selected) : {}
+            var a = Math.min(anchorIndex, index), b = Math.max(anchorIndex, index)
+            for (var i = a; i <= b; i++) s[shown[i].path] = true
+        } else if (mods & Qt.ControlModifier) {
+            s = Object.assign({}, selected)
+            if (s[e.path]) delete s[e.path]; else s[e.path] = true
+            anchorIndex = index
+        } else {
+            s = {}; s[e.path] = true
+            anchorIndex = index
+        }
+        selected = s
+        ex.forceActiveFocus()
+    }
+    function startDrag(e, x, y) {
+        if (!selected[e.path]) { var s = {}; s[e.path] = true; selected = s }
+        var paths = selectedPaths()
+        UI.wm.beginFileDrag({ paths: paths, sourceDir: path, icon: e.icon, x: x, y: y,
+                              label: paths.length === 1 ? e.name : paths.length + " items" })
+    }
+
+    function selectedEntries() { return shown.filter(function (e) { return selected[e.path] }) }
+    function selectedPaths() { return selectedEntries().map(function (e) { return e.path }) }
+    function selectAll() { var s = {}; shown.forEach(function (e) { s[e.path] = true }); selected = s }
+
+    // ------------------------------------------------------------ actions
+    function open(e) {
+        if (inTrash) { propertiesFor(e); return }
+        if (e.isDir) navigate(e.path)
+        else if (e.kind === "archive" && Storage.canExtract(e.path)) archiveView.openArchive(e.path)
+        else wm.openPath(e.path)
+    }
+    function openSelected() { var s = selectedEntries(); if (s.length === 1 && s[0].isDir) navigate(s[0].path); else s.forEach(open) }
+
+    function newFolder() {
+        var p = Storage.createFolder(path, "New folder")
+        if (p) { reload(); var s = {}; s[p] = true; selected = s; renameEntry(Storage.info(p)) }
+    }
+    function newFile() {
+        var p = Storage.createFile(path, "New text document.txt")
+        if (p) { reload(); var s = {}; s[p] = true; selected = s; renameEntry(Storage.info(p)) }
+    }
+
+    function renameEntry(e) {
+        if (!e || inTrash) return
+        dialog.ask({ title: "Rename", icon: "edit", input: true, text: e.name, selectStem: !e.isDir,
+                     buttons: [{ text: "Cancel", value: "cancel" }, { text: "Rename", value: "ok", kind: "primary" }] },
+                   function (v, text) {
+                       if (v !== "ok" || text === e.name) return
+                       if (!Storage.isValidName(text)) { wm.notify("Can't rename", "Names can't contain / \\ : * ? \" < > |", "warning-color"); return }
+                       var np = Storage.rename(e.path, text)
+                       if (!np) wm.notify("Can't rename", "“" + text + "” already exists or the item is protected.", "warning-color")
+                       else { var s = {}; s[np] = true; selected = s }
+                   })
+    }
+
+    function deleteSelection() {
+        var paths = selectedPaths()
+        if (!paths.length) return
+        if (inTrash) {
+            dialog.ask({ title: "Delete permanently?", icon: "trash",
+                         message: (paths.length === 1 ? "“" + selectedEntries()[0].name + "”" : paths.length + " items") + " will be gone forever.",
+                         buttons: [{ text: "Cancel", value: "cancel" }, { text: "Delete", value: "ok", kind: "danger" }] },
+                       function (v) { if (v === "ok") Storage.deletePermanently(paths) })
+            return
+        }
+        var n = Storage.trash(paths)
+        if (n) wm.notify("Moved to Recycle Bin", n === 1 ? paths[0].split("/").pop() : n + " items", "trash")
+        else wm.notify("Can't delete", "System folders are protected.", "shield-on")
+    }
+
+    function restoreSelection() { restorePaths(selectedPaths()) }
+    // tell the user exactly where restored items went (click the toast to go there)
+    function restorePaths(paths) {
+        var dest = Storage.restoreItems(paths)
+        if (!dest.length) return
+        var folder = Storage.parentOf(dest[0])
+        var same = dest.every(function (d) { return Storage.parentOf(d) === folder })
+        var what = dest.length === 1 ? dest[0].split("/").pop() : dest.length + " items"
+        wm.notify("Restored " + what, "to " + (same ? (folder === "/" ? "Home" : folder) : "their original folders"), "undo",
+                  function () { wm.openApp("AeroExplorer", { initialPath: folder, initialSelect: dest[0] }) })
+    }
+
+    function emptyTrash() {
+        dialog.ask({ title: "Empty the Recycle Bin?", icon: "broom",
+                     message: Storage.trashCount + " item(s) will be permanently deleted.",
+                     buttons: [{ text: "Cancel", value: "cancel" }, { text: "Empty", value: "ok", kind: "danger" }] },
+                   function (v) { if (v === "ok") Storage.emptyTrash() })
+    }
+
+    function propertiesFor(e) {
+        var info = Storage.info(e.path)
+        var lines = []
+        lines.push("Type: " + (info.isDir ? "Folder" : (info.ext ? info.ext.toUpperCase() + " file" : "File")))
+        lines.push("Location: " + (inTrash && e.originalPath ? Storage.parentOf(e.originalPath) + "  (deleted)" : Storage.parentOf(e.path)))
+        lines.push("Size: " + UI.fmtSize(info.size))
+        if (info.isDir) lines.push("Contains: " + info.files + " files, " + info.folders + " folders")
+        lines.push((inTrash ? "Deleted: " + UI.fmtDate(e.deletedAt) : "Modified: " + UI.fmtDate(info.modified)))
+        var buttons = [{ text: "Close", value: "close", kind: "primary" }]
+        if (inTrash) buttons = [{ text: "Close", value: "close" }, { text: "Restore", value: "restore", kind: "primary" }]
+        dialog.ask({ title: e.name, icon: e.icon, message: lines.join("\n"), buttons: buttons },
+                   function (v) { if (v === "restore") ex.restorePaths([e.path]) })
+    }
+
+    function itemMenu(e, item, mx, my) {
+        if (!selected[e.path]) { var s = {}; s[e.path] = true; selected = s }
+        var many = selectedCount > 1
+        var items
+        if (inTrash) {
+            items = [
+                { text: "Restore", icon: "undo", action: restoreSelection },
+                { text: "Properties", icon: "info", enabled: !many, action: function () { propertiesFor(e) } },
+                { separator: true },
+                { text: "Delete permanently", icon: "trash", danger: true, shortcut: "Del", action: deleteSelection }
+            ]
+        } else {
+            items = [{ text: e.isDir ? "Open" : "Open", icon: "folder-open", shortcut: "Enter", action: openSelected }]
+            if (e.isDir) items.push({ text: "Open in new window", icon: "external", action: function () { wm.openApp("AeroExplorer", { initialPath: e.path }) } })
+            if (e.isDir) items.push({ text: "Open Terminal here", icon: "terminal", action: function () { wm.openApp("Terminal", { initialCwd: e.path }) } })
+            if (!e.isDir) items.push({ text: "Edit in GlassPad", icon: "edit", action: function () { wm.openApp("GlassPad", { filePath: e.path }) } })
+            if (e.kind === "image") items.push({ text: "Set as wallpaper", icon: "image", action: function () { Prefs.setWallpaper(e.path); wm.notify("Wallpaper changed", e.name, "image") } })
+            items = items.concat([
+                { separator: true },
+                { text: "Extract here", icon: "file-archive", enabled: !many && Storage.canExtract(e.path), action: function () { ex.extractArchive(e.path) } },
+                { text: many ? "Compress " + selectedCount + " items to ZIP" : "Compress to ZIP", icon: "file-archive", action: ex.compressSelection },
+                { separator: true },
+                { text: "Cut", icon: "cut", shortcut: "Ctrl+X", action: function () { Storage.cut(selectedPaths()) } },
+                { text: "Copy", icon: "paste", shortcut: "Ctrl+C", action: function () { Storage.copy(selectedPaths()) } },
+                { text: "Rename", icon: "edit", shortcut: "F2", enabled: !many, action: function () { renameEntry(e) } },
+                { text: "Properties", icon: "info", enabled: !many, action: function () { propertiesFor(e) } },
+                { text: "Export to computer…", icon: "export", action: function () { wm.openExportDialog(selectedPaths()) } },
+                { separator: true },
+                { text: many ? "Delete " + selectedCount + " items" : "Delete", icon: "trash", shortcut: "Del", danger: true, action: deleteSelection }
+            ])
+        }
+        menu.show(item, mx, my, items)
+    }
+
+    function backgroundMenu(item, mx, my) {
+        selected = {}
+        var items = inTrash ? [
+            { text: "Empty Recycle Bin", icon: "broom", danger: true, enabled: Storage.trashCount > 0, action: emptyTrash },
+            { text: "Refresh", icon: "refresh", shortcut: "F5", action: reload }
+        ] : [
+            { text: "New folder", icon: "folder", shortcut: "Ctrl+Shift+N", action: newFolder },
+            { text: "New text document", icon: "edit", action: newFile },
+            { text: "Paste", icon: "paste", shortcut: "Ctrl+V", enabled: wm.canPaste(), action: function () { wm.pasteInto(path) } },
+            { text: "Import files from computer…", icon: "import", action: function () { wm.openImportDialog(path) } },
+            { separator: true },
+            { text: viewMode === "grid" ? "Show as list" : "Show as icons", icon: viewMode === "grid" ? "list" : "grid", action: function () { setView(viewMode === "grid" ? "list" : "grid") } },
+            { text: "Open Terminal here", icon: "terminal", action: function () { wm.openApp("Terminal", { initialCwd: path }) } },
+            { text: "Refresh", icon: "refresh", shortcut: "F5", action: reload }
+        ]
+        menu.show(item, mx, my, items)
+    }
+
+    function moveSelection(delta) {
+        if (!shown.length) return
+        var cur = anchorIndex < 0 ? (delta > 0 ? -1 : shown.length) : anchorIndex
+        var next = Math.max(0, Math.min(shown.length - 1, cur + delta))
+        clickItem(next, 0)
+        if (viewMode === "grid") grid.positionViewAtIndex(next, GridView.Contain)
+        else list.positionViewAtIndex(next, ListView.Contain)
+    }
+
+    Keys.onPressed: function (event) {
+        var ctrl = event.modifiers & Qt.ControlModifier
+        var k = event.key
+        if (k === Qt.Key_Return || k === Qt.Key_Enter) openSelected()
+        else if (k === Qt.Key_Backspace || (k === Qt.Key_Up && (event.modifiers & Qt.AltModifier))) up()
+        else if (k === Qt.Key_Left && (event.modifiers & Qt.AltModifier)) back()
+        else if (k === Qt.Key_Right && (event.modifiers & Qt.AltModifier)) forward()
+        else if (k === Qt.Key_Delete) deleteSelection()
+        else if (k === Qt.Key_F2) { var s = selectedEntries(); if (s.length === 1) renameEntry(s[0]) }
+        else if (k === Qt.Key_F5) reload()
+        else if (k === Qt.Key_P && (event.modifiers & Qt.AltModifier)) { showDetails = !showDetails; Prefs.setValue("explorer.details", showDetails) }
+        else if (ctrl && k === Qt.Key_A) selectAll()
+        else if (ctrl && k === Qt.Key_C) Storage.copy(selectedPaths())
+        else if (ctrl && k === Qt.Key_X) Storage.cut(selectedPaths())
+        else if (ctrl && k === Qt.Key_V && !inTrash) wm.pasteInto(path)
+        else if (ctrl && k === Qt.Key_F) searchField.forceActiveFocus()
+        else if (ctrl && (event.modifiers & Qt.ShiftModifier) && k === Qt.Key_N) newFolder()
+        else if (k === Qt.Key_Down) moveSelection(viewMode === "grid" ? Math.max(1, Math.floor(grid.width / grid.cellWidth)) : 1)
+        else if (k === Qt.Key_Up) moveSelection(viewMode === "grid" ? -Math.max(1, Math.floor(grid.width / grid.cellWidth)) : -1)
+        else if (k === Qt.Key_Right && viewMode === "grid") moveSelection(1)
+        else if (k === Qt.Key_Left && viewMode === "grid") moveSelection(-1)
+        else if (k === Qt.Key_Escape) selected = {}
+        else return
+        event.accepted = true
+    }
+
+    // ================================================================ layout
+    ColumnLayout {
         anchors.fill: parent
         spacing: 0
-        
-        // ===== NAVIGATION PANE (Left Sidebar) =====
-        Rectangle {
-            Layout.preferredWidth: 180
-            Layout.fillHeight: true
-            color: Qt.rgba(0.06, 0.07, 0.09, 0.95)
-            
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: 8
-                spacing: 4
-                
-                // Quick Access Header
-                Text {
-                    text: "Quick Access"
-                    font.pixelSize: 11
-                    font.weight: Font.Medium
-                    color: "#888888"
-                    leftPadding: 8
-                    topPadding: 4
-                    bottomPadding: 4
-                }
-                
-                // Navigation Items
-                ListView {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    model: navTree
-                    spacing: 2
-                    clip: true
-                    
-                    delegate: Rectangle {
-                        width: ListView.view.width
-                        height: 32
-                        radius: 6
-                        
-                        property bool isActive: currentPath === modelData.path
-                        property bool isHovered: navItemMouse.containsMouse
-                        
-                        color: isActive ? Theme.accentColor : (isHovered ? Qt.rgba(1, 1, 1, 0.08) : "transparent")
-                        
-                        Row {
-                            anchors.fill: parent
-                            anchors.leftMargin: 8
-                            spacing: 10
-                            
-                            // Expand chevron (placeholder for future tree)
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: "›"
-                                font.pixelSize: 10
-                                color: "#666"
-                                visible: false // Hide for now
-                            }
-                            
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: modelData.icon
-                                font.pixelSize: 14
-                            }
-                            
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: modelData.name
-                                font.pixelSize: 12
-                                color: isActive ? "#ffffff" : "#cccccc"
-                            }
+
+        // ---------------------------------------------------------- toolbar
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.preferredHeight: UI.px(46)
+            Layout.leftMargin: 10
+            Layout.rightMargin: 10
+            spacing: 4
+            IconButton { iconName: "back"; tip: "Back (Alt+←)"; enabled: ex.historyIndex > 0; onClicked: ex.back() }
+            IconButton { iconName: "forward"; tip: "Forward (Alt+→)"; enabled: ex.historyIndex < ex.history.length - 1; onClicked: ex.forward() }
+            IconButton { iconName: "up"; tip: "Up (Backspace)"; enabled: ex.path !== "/"; onClicked: ex.up() }
+            IconButton { iconName: "refresh"; tip: "Refresh (F5)"; onClicked: ex.reload() }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: UI.px(32)
+                Layout.leftMargin: 6
+                radius: UI.radiusSmall
+                color: UI.field
+                border.color: UI.border
+                clip: true
+                Row {
+                    anchors.left: parent.left
+                    anchors.leftMargin: 6
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 0
+                    Repeater {
+                        model: {
+                            var parts = ex.path.split("/").filter(function (x) { return x !== "" })
+                            var out = [{ name: "Home", path: "/" }], acc = ""
+                            for (var i = 0; i < parts.length; i++) { acc += "/" + parts[i]; out.push({ name: parts[i], path: acc }) }
+                            return out
                         }
-                        
-                        MouseArea {
-                            id: navItemMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: loadFolder(modelData.path)
-                        }
-                    }
-                }
-                
-                // Separator
-                Rectangle {
-                    Layout.fillWidth: true
-                    height: 1
-                    color: Qt.rgba(1, 1, 1, 0.1)
-                }
-                
-                // New Button
-                Rectangle {
-                    Layout.fillWidth: true
-                    height: 36
-                    radius: 6
-                    color: newBtnMouse.containsMouse ? Qt.rgba(0.3, 0.5, 0.8, 0.5) : Qt.rgba(0.3, 0.5, 0.8, 0.3)
-                    border.width: 1
-                    border.color: Qt.rgba(0.4, 0.6, 0.9, 0.3)
-                    
-                    Row {
-                        anchors.centerIn: parent
-                        spacing: 8
-                        Text { text: "➕"; font.pixelSize: 12 }
-                        Text { text: "New"; font.pixelSize: 12; color: "#fff"; font.weight: Font.Medium }
-                    }
-                    
-                    MouseArea {
-                        id: newBtnMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: newMenu.open()
-                        
-                        Popup {
-                            id: newMenu
-                            y: -height - 4
-                            width: 160
-                            padding: 6
-                            
-                            background: Rectangle {
-                                color: Qt.rgba(0.12, 0.14, 0.18, 0.98)
-                                radius: 6
-                                border.width: 1
-                                border.color: Qt.rgba(1, 1, 1, 0.15)
-                            }
-                            
-                            Column {
-                                width: parent.width
-                                spacing: 2
-                                
-                                PopupMenuItem {
-                                    text: "New Folder"
-                                    icon: "📁"
-                                    onClicked: { newMenu.close(); createNewFolder() }
-                                }
-                                PopupMenuItem {
-                                    text: "New Text File"
-                                    icon: "📄"
-                                    onClicked: { newMenu.close(); createNewFile() }
-                                }
+                        delegate: Row {
+                            Icon { name: "chevron-right"; size: UI.px(14); visible: index > 0; anchors.verticalCenter: parent.verticalCenter }
+                            AbstractButton {
+                                id: crumb
+                                hoverEnabled: true
+                                implicitHeight: UI.px(26)
+                                implicitWidth: crumbText.implicitWidth + 14
+                                onClicked: ex.navigate(modelData.path)
+                                background: Rectangle { radius: 4; color: crumb.hovered ? UI.hover : "transparent" }
+                                contentItem: Text { font.weight: UI.textWeight; id: crumbText; text: modelData.name; color: UI.text; font.pixelSize: UI.px(12.5); horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                             }
                         }
                     }
                 }
             }
+
+            GTextField {
+                id: searchField
+                Layout.preferredWidth: UI.px(200)
+                Layout.preferredHeight: UI.px(32)
+                leading: "search"
+                placeholderText: "Filter this folder"
+                onTextChanged: ex.filter = text
+                Keys.onEscapePressed: { text = ""; ex.forceActiveFocus() }
+                Keys.onDownPressed: ex.forceActiveFocus()
+            }
+            IconButton { iconName: "import"; tip: "Import files from your computer (or drag them in)"; enabled: !ex.inTrash; onClicked: ex.wm.openImportDialog(ex.path) }
+            IconButton { iconName: "details-pane"; tip: "Details pane (Alt+P)"; active: ex.showDetails; onClicked: { ex.showDetails = !ex.showDetails; Prefs.setValue("explorer.details", ex.showDetails) } }
+            IconButton { iconName: "grid"; tip: "Icons"; active: ex.viewMode === "grid"; onClicked: ex.setView("grid") }
+            IconButton { iconName: "list"; tip: "List"; active: ex.viewMode === "list"; onClicked: ex.setView("list") }
         }
-        
-        // ===== MAIN CONTENT AREA =====
-        ColumnLayout {
+        Rectangle { Layout.fillWidth: true; height: 1; color: UI.border }
+
+        RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 0
-            
-            // ===== TOOLBAR =====
+
+            // ------------------------------------------------------ sidebar
             Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 44
-                color: Qt.rgba(0.08, 0.09, 0.11, 0.98)
-                
-                RowLayout {
+                Layout.fillHeight: true
+                Layout.preferredWidth: UI.px(186)
+                visible: ex.width > 600
+                color: Qt.rgba(0, 0, 0, 0.12)
+                Column {
                     anchors.fill: parent
-                    anchors.leftMargin: 8
-                    anchors.rightMargin: 8
-                    spacing: 4
-                    
-                    // Navigation buttons
-                    Row {
-                        spacing: 2
-                        
-                        ToolbarButton {
-                            icon: "←"
-                            tooltip: "Back (Alt+Left)"
-                            enabled: historyIndex > 0
-                            onClicked: goBack()
-                        }
-                        ToolbarButton {
-                            icon: "→"
-                            tooltip: "Forward (Alt+Right)"
-                            enabled: historyIndex < navigationHistory.length - 1
-                            onClicked: goForward()
-                        }
-                        ToolbarButton {
-                            icon: "↑"
-                            tooltip: "Up (Backspace)"
-                            enabled: currentPath !== "/"
-                            onClicked: goUp()
-                        }
-                        ToolbarButton {
-                            icon: "⟳"
-                            tooltip: "Refresh (F5)"
-                            onClicked: loadFolder(currentPath)
-                        }
-                    }
-                    
-                    // Breadcrumb Path Bar
-                    Rectangle {
-                        Layout.fillWidth: true
-                        height: 32
-                        radius: 6
-                        color: Qt.rgba(0, 0, 0, 0.3)
-                        border.width: 1
-                        border.color: Qt.rgba(1, 1, 1, 0.1)
-                        
-                        Row {
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            anchors.leftMargin: 10
-                            anchors.rightMargin: 10
-                            spacing: 4
-                            
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: currentPath === "/Recycle Bin" ? "🗑" : "📁"
-                                font.pixelSize: 14
-                            }
-                            
-                            Repeater {
-                                model: getPathBreadcrumbs()
-                                
-                                Row {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    spacing: 4
-                                    
-                                    Text {
-                                        visible: index > 0
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: "›"
-                                        font.pixelSize: 14
-                                        color: "#666"
-                                    }
-                                    
-                                    Text {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: modelData.name
-                                        font.pixelSize: 13
-                                        color: crumbMouse.containsMouse ? "#4a9eff" : "#ffffff"
-                                        
-                                        MouseArea {
-                                            id: crumbMouse
-                                            anchors.fill: parent
-                                            hoverEnabled: true
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: loadFolder(modelData.path)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Search Box
-                    Rectangle {
-                        width: 180
-                        height: 32
-                        radius: 6
-                        color: Qt.rgba(0, 0, 0, 0.3)
-                        border.width: searchInput.activeFocus ? 1 : 0
-                        border.color: Theme.accentColor
-                        
-                        Row {
-                            anchors.fill: parent
-                            anchors.leftMargin: 10
-                            anchors.rightMargin: 10
-                            spacing: 8
-                            
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: "🔍"
-                                font.pixelSize: 12
-                                opacity: 0.6
-                            }
-                            
-                            TextInput {
-                                id: searchInput
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: parent.width - 40
-                                color: "#ffffff"
-                                font.pixelSize: 12
-                                clip: true
-                                
-                                onTextChanged: searchQuery = text
-                                
-                                Text {
-                                    visible: !parent.text
-                                    text: "Search..."
-                                    color: "#666"
-                                    font: parent.font
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // ===== ACTION BAR =====
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 40
-                color: Qt.rgba(0.06, 0.07, 0.09, 0.95)
-                
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 12
-                    anchors.rightMargin: 12
-                    spacing: 4
-                    
-                    // Action Buttons
-                    ActionButton { 
-                        icon: "✂"; text: "Cut"; shortcut: "Ctrl+X"
-                        enabled: selectedFile !== null && currentPath !== "/Recycle Bin"
-                        onClicked: Storage.setClipboard(selectedFile.path, "cut")
-                    }
-                    ActionButton { 
-                        icon: "📋"; text: "Copy"; shortcut: "Ctrl+C"
-                        enabled: selectedFile !== null && currentPath !== "/Recycle Bin"
-                        onClicked: Storage.setClipboard(selectedFile.path, "copy")
-                    }
-                    ActionButton { 
-                        icon: "📥"; text: "Paste"; shortcut: "Ctrl+V"
-                        enabled: hasClipboard && currentPath !== "/Recycle Bin"
-                        onClicked: { if (Storage.paste(currentPath)) loadFolder(currentPath) }
-                    }
-                    ActionButton { 
-                        icon: "✏"; text: "Rename"; shortcut: "F2"
-                        enabled: selectedFile !== null
-                        onClicked: {
-                            renameDialog.visible = true
-                            renameInput.text = selectedFile.name
-                            renameInput.selectAll()
-                            renameInput.forceActiveFocus()
-                        }
-                    }
-                    ActionButton { 
-                        icon: "🗑"; text: currentPath === "/Recycle Bin" ? "Delete" : "Delete"
-                        enabled: selectedFile !== null
-                        onClicked: deleteDialog.visible = true
-                    }
-                    
-                    ToolbarSeparator {}
-                    
-                    // Sort dropdown
-                    ActionButton {
-                        icon: "↕"; text: "Sort"
-                        hasDropdown: true
-                    }
-                    
-                    // View dropdown
-                    ActionButton {
-                        icon: viewMode === "grid" ? "⊞" : "☰"
-                        text: "View"
-                        hasDropdown: true
-                        onClicked: viewMode = (viewMode === "grid" ? "details" : "grid")
-                    }
-                    
-                    Item { Layout.fillWidth: true }
-                    
-                    // Details pane toggle
-                    Rectangle {
-                        width: 80
-                        height: 28
-                        radius: 4
-                        color: detailsPaneMouse.containsMouse ? Qt.rgba(1,1,1,0.1) : "transparent"
-                        
-                        Row {
-                            anchors.centerIn: parent
-                            spacing: 6
-                            Text { text: "☰"; font.pixelSize: 12; color: showDetailsPane ? Theme.accentColor : "#888" }
-                            Text { text: "Details"; font.pixelSize: 11; color: showDetailsPane ? "#fff" : "#888" }
-                        }
-                        
-                        MouseArea {
-                            id: detailsPaneMouse
-                            anchors.fill: parent
+                    anchors.margins: 8
+                    spacing: 2
+                    Repeater {
+                        model: [{ name: "Home", path: "/", icon: "home" }].concat(Storage.specialFolders()).concat([{ name: "Recycle Bin", path: "/Recycle Bin", icon: "trash" }])
+                        delegate: AbstractButton {
+                            id: side
+                            width: parent.width
+                            height: UI.px(32)
                             hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: showDetailsPane = !showDetailsPane
+                            readonly property bool current: ex.path === modelData.path
+                            onClicked: ex.navigate(modelData.path)
+                            DropArea {
+                                id: sideDrop
+                                anchors.fill: parent
+                                onEntered: function (drag) {
+                                    var ok = UI.wm.canDropOn(drag, modelData.path)
+                                    drag.accepted = ok
+                                    if (ok) UI.wm.setDropTarget(modelData.name)
+                                }
+                                onExited: UI.wm.setDropTarget("")
+                                onDropped: function (drop) { if (UI.wm.dropInto(modelData.path, drop)) drop.acceptProposedAction() }
+                            }
+                            background: Rectangle {
+                                radius: UI.radiusSmall
+                                border.width: sideDrop.containsDrag ? 2 : 0
+                                border.color: UI.accent
+                                color: sideDrop.containsDrag ? UI.accentSoft : side.current ? UI.accentFaint : (side.hovered ? UI.hover : "transparent")
+                                Rectangle { visible: side.current; width: 3; height: 16; radius: 1.5; color: UI.accent; anchors.verticalCenter: parent.verticalCenter }
+                            }
+                            contentItem: Row {
+                                leftPadding: 10
+                                spacing: 10
+                                Icon { name: modelData.icon; size: UI.px(14); anchors.verticalCenter: parent.verticalCenter }
+                                Text { font.weight: UI.textWeight; text: modelData.name; color: UI.text; font.pixelSize: UI.px(12.5); anchors.verticalCenter: parent.verticalCenter }
+                                Text {
+                                    font.weight: UI.textWeight
+                                    visible: modelData.path === "/Recycle Bin" && Storage.trashCount > 0
+                                    text: Storage.trashCount
+                                    color: UI.textFaint; font.pixelSize: UI.px(11)
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                            }
                         }
                     }
                 }
+                Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: UI.border }
             }
-            
-            // ===== CONTENT + DETAILS PANE =====
-            RowLayout {
+
+            // ------------------------------------------------------ content
+            ColumnLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 spacing: 0
-                
-                // File Area
-                Rectangle {
+
+                Rectangle {   // recycle bin banner
+                    visible: ex.inTrash
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: UI.px(44)
+                    color: UI.accentFaint
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 14
+                        anchors.rightMargin: 10
+                        Text { font.weight: UI.textWeight; text: "Items here can be restored to where they came from."; color: UI.textDim; font.pixelSize: UI.px(12); Layout.fillWidth: true; elide: Text.ElideRight }
+                        GButton { text: "Restore"; iconName: "undo"; enabled: ex.selectedCount > 0; onClicked: ex.restoreSelection() }
+                        GButton { text: "Empty"; iconName: "broom"; kind: "danger"; enabled: Storage.trashCount > 0; onClicked: ex.emptyTrash() }
+                    }
+                }
+
+                Rectangle {   // list header
+                    visible: ex.viewMode === "list"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: UI.px(30)
+                    color: "transparent"
+                    Row {
+                        anchors.fill: parent
+                        anchors.leftMargin: 12
+                        Repeater {
+                            model: [
+                                { key: "name", label: "Name", w: 0.42 },
+                                { key: "modified", label: ex.inTrash ? "Deleted" : "Modified", w: 0.27 },
+                                { key: "kind", label: ex.inTrash ? "Original location" : "Type", w: 0.17 },
+                                { key: "size", label: "Size", w: 0.14 }
+                            ]
+                            delegate: MouseArea {
+                                width: (parent.width - 12) * modelData.w
+                                height: parent.height
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: ex.setSort(modelData.key)
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: modelData.label + (ex.sortKey === modelData.key ? (ex.sortDesc ? "  ▾" : "  ▴") : "")
+                                    color: ex.sortKey === modelData.key ? UI.text : UI.textDim
+                                    font.pixelSize: UI.px(11.5)
+                                    font.weight: Font.Medium
+                                }
+                            }
+                        }
+                    }
+                    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: UI.border }
+                }
+
+                Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    Layout.margins: 8
-                    radius: 8
-                    color: Qt.rgba(0.04, 0.045, 0.06, 0.9)
-                    
-                    // Right-click on empty area
-                    MouseArea {
-                        anchors.fill: parent
-                        acceptedButtons: Qt.RightButton | Qt.LeftButton
-                        onClicked: function(mouse) {
-                            if (mouse.button === Qt.RightButton) {
-                                clearSelection()
-                                fileContextMenu.visible = false
-                                bgContextMenu.x = mouse.x
-                                bgContextMenu.y = mouse.y
-                                bgContextMenu.visible = true
-                            } else {
-                                // Click on empty space deselects all
-                                clearSelection()
-                                fileContextMenu.visible = false
-                                bgContextMenu.visible = false
-                            }
-                        }
-                    }
-                    
-                    // Drop Area for folder
+
                     DropArea {
+                        id: paneDrop
                         anchors.fill: parent
-                        onDropped: function(drop) {
-                            if (drop.hasFormat("path")) {
-                                var sourcePath = drop.getDataAsString("path")
-                                if (currentPath === "/Recycle Bin") {
-                                    if (Storage.moveToTrash(sourcePath)) loadFolder(currentPath)
-                                } else {
-                                    if (Storage.moveItem(sourcePath, currentPath)) loadFolder(currentPath)
-                                }
-                            }
+                        onEntered: function (drag) {
+                            var ok = UI.wm.canDropOn(drag, ex.path)
+                            drag.accepted = ok
+                            if (ok) UI.wm.setDropTarget(ex.inTrash ? "Recycle Bin" : UI.wm.folderName(ex.path))
                         }
+                        onExited: UI.wm.setDropTarget("")
+                        onDropped: function (drop) { if (UI.wm.dropInto(ex.path, drop)) drop.acceptProposedAction() }
                     }
-                    
-                    // Grid View
+                    Rectangle {
+                        anchors.fill: parent
+                        anchors.margins: 4
+                        radius: UI.radius
+                        visible: paneDrop.containsDrag
+                        color: UI.accentFaint
+                        border.width: 2
+                        border.color: UI.alpha(UI.accent, 0.7)
+                    }
+
                     GridView {
-                        id: fileGrid
+                        id: grid
+                        visible: ex.viewMode === "grid"
                         anchors.fill: parent
-                        anchors.margins: 12
-                        visible: viewMode === "grid"
-                        cellWidth: 100
-                        cellHeight: 100
+                        anchors.margins: 8
                         clip: true
-                        model: getFilteredFiles()
-                        
-                        delegate: FileGridItem {
-                            file: modelData
-                            isSelected: isFileSelected(modelData)
-                            showCheckbox: showCheckboxes
-                            
-                            onClicked: function(mouse) {
-                                bgContextMenu.visible = false
-                                fileContextMenu.visible = false
-                                
-                                if (mouse.button === Qt.RightButton) {
-                                    // Right-click: select if not selected, show menu
-                                    if (!isFileSelected(modelData)) {
-                                        selectFile(modelData, false)
+                        cellWidth: UI.px(108)
+                        cellHeight: UI.px(116)
+                        model: ex.shown
+                        reuseItems: true
+                        cacheBuffer: 400
+                        boundsBehavior: Flickable.StopAtBounds
+                        ScrollBar.vertical: GScrollBar {}
+                        delegate: Item {
+                            id: cell
+                            width: grid.cellWidth
+                            height: grid.cellHeight
+                            readonly property bool sel: ex.selected[modelData.path] === true
+                            readonly property bool isCut: ex.cutSet[modelData.path] === true
+                            property string thumb: ""
+                            function loadThumb() {
+                                var k = modelData.kind
+                                cell.thumb = (k === "image" || k === "video" || k === "audio") && modelData.ext !== "svg" ? Thumbs.request(modelData.path) : ""
+                            }
+                            Component.onCompleted: loadThumb()
+                            GridView.onReused: loadThumb()
+                            Connections { target: Thumbs; function onReady(p, url) { if (p === modelData.path && url) cell.thumb = url } }
+                            DropArea {
+                                id: cellDrop
+                                anchors.fill: parent
+                                enabled: modelData.isDir && !ex.inTrash
+                                onEntered: function (drag) {
+                                    var ok = UI.wm.canDropOn(drag, modelData.path)
+                                    drag.accepted = ok
+                                    if (ok) UI.wm.setDropTarget(modelData.name)
+                                }
+                                onExited: UI.wm.setDropTarget("")
+                                onDropped: function (drop) { if (UI.wm.dropInto(modelData.path, drop)) drop.acceptProposedAction() }
+                            }
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.margins: 3
+                                radius: UI.radius
+                                color: cellDrop.containsDrag ? UI.accentSoft : cell.sel ? UI.accentSoft : (cellMouse.containsMouse ? UI.hover : "transparent")
+                                border.width: cellDrop.containsDrag ? 2 : (cell.sel ? 1 : 0)
+                                border.color: cellDrop.containsDrag ? UI.accent : UI.alpha(UI.accent, 0.5)
+                            }
+                            Column {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                anchors.top: parent.top
+                                anchors.topMargin: 10
+                                spacing: 6
+                                opacity: cell.isCut ? 0.45 : 1
+                                Item {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    width: UI.px(64); height: UI.px(56)
+                                    Icon { anchors.centerIn: parent; visible: thumbImg.status !== Image.Ready; name: modelData.icon; size: UI.px(52) }
+                                    Image {
+                                        id: thumbImg
+                                        anchors.fill: parent
+                                        visible: status === Image.Ready
+                                        source: cell.thumb
+                                        sourceSize.width: 128
+                                        sourceSize.height: 112
+                                        fillMode: Image.PreserveAspectFit
+                                        asynchronous: true
                                     }
-                                    fileContextMenu.x = mouse.x + x
-                                    fileContextMenu.y = mouse.y + y
-                                    fileContextMenu.visible = true
-                                } else {
-                                    // Left click with Ctrl = toggle selection
-                                    var ctrlHeld = (mouse.modifiers & Qt.ControlModifier)
-                                    selectFile(modelData, ctrlHeld)
+                                    Rectangle {   // play badge on video thumbnails
+                                        visible: thumbImg.visible && modelData.kind === "video"
+                                        anchors.centerIn: parent
+                                        width: UI.px(22); height: width; radius: width / 2
+                                        color: Qt.rgba(0, 0, 0, 0.55)
+                                        Icon { anchors.centerIn: parent; anchors.horizontalCenterOffset: 1; name: "play"; size: UI.px(12) }
+                                    }
+                                }
+                                Text {
+                                    font.weight: UI.textWeight
+                                    width: grid.cellWidth - 12
+                                    text: modelData.name
+                                    color: UI.text
+                                    font.pixelSize: UI.px(12)
+                                    horizontalAlignment: Text.AlignHCenter
+                                    wrapMode: Text.Wrap
+                                    maximumLineCount: 2
+                                    elide: Text.ElideRight
                                 }
                             }
-                            
-                            onCheckboxToggled: {
-                                toggleFileSelection(modelData)
+                            MouseArea {
+                                id: cellMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                preventStealing: true          // the GridView must not turn a file drag into a scroll
+                                property point pressPos: Qt.point(0, 0)
+                                property bool dragging: false
+                                property bool deferSelect: false
+                                onPressed: function (mouse) {
+                                    pressPos = Qt.point(mouse.x, mouse.y)
+                                    dragging = false
+                                    // pressing an already-selected item keeps the multi-selection so it can be dragged
+                                    deferSelect = cell.sel && mouse.modifiers === Qt.NoModifier
+                                    if (!deferSelect) ex.clickItem(index, mouse.modifiers)
+                                }
+                                onPositionChanged: function (mouse) {
+                                    if (!(mouse.buttons & Qt.LeftButton) || ex.inTrash) return
+                                    var p = mapToItem(null, mouse.x, mouse.y)
+                                    if (!dragging) {
+                                        if (Math.abs(mouse.x - pressPos.x) + Math.abs(mouse.y - pressPos.y) < 8) return
+                                        dragging = true
+                                        ex.startDrag(modelData, p.x, p.y)
+                                    }
+                                    UI.wm.moveFileDrag(p.x, p.y, mouse.modifiers)
+                                }
+                                onReleased: function (mouse) {
+                                    if (dragging) {
+                                        dragging = false
+                                        var p = mapToItem(null, mouse.x, mouse.y)
+                                        UI.wm.endFileDrag(p.x, p.y, mouse.modifiers)
+                                    } else if (deferSelect) {
+                                        ex.clickItem(index, 0)
+                                    }
+                                }
+                                onCanceled: { if (dragging) { dragging = false; UI.wm.cancelFileDrag() } }
+                                onDoubleClicked: function (mouse) { if (mouse.button === Qt.LeftButton) ex.open(modelData) }
                             }
-                            
-                            onDoubleClicked: openFile(modelData)
                         }
                     }
-                    
-                    // Details View (List with columns)
-                    Column {
+
+                    ListView {
+                        id: list
+                        visible: ex.viewMode === "list"
                         anchors.fill: parent
-                        visible: viewMode === "details"
-                        
-                        // Column Headers
-                        Rectangle {
-                            width: parent.width
-                            height: 32
-                            color: Qt.rgba(0, 0, 0, 0.3)
-                            
+                        anchors.margins: 4
+                        clip: true
+                        model: ex.shown
+                        reuseItems: true
+                        boundsBehavior: Flickable.StopAtBounds
+                        ScrollBar.vertical: GScrollBar {}
+                        delegate: Rectangle {
+                            id: row
+                            width: list.width
+                            height: UI.px(32)
+                            radius: UI.radiusSmall
+                            readonly property bool sel: ex.selected[modelData.path] === true
+                            color: rowDrop.containsDrag || sel ? UI.accentSoft : (rowMouse.containsMouse ? UI.hover : "transparent")
+                            border.width: rowDrop.containsDrag ? 2 : 0
+                            border.color: UI.accent
+                            opacity: ex.cutSet[modelData.path] === true ? 0.45 : 1
+                            readonly property real usable: width - 16
                             Row {
                                 anchors.fill: parent
-                                anchors.leftMargin: 16
-                                
-                                Text { width: 250; text: "Name"; font.pixelSize: 11; color: "#888"; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
-                                Text { width: 140; text: "Date modified"; font.pixelSize: 11; color: "#888"; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
-                                Text { width: 100; text: "Type"; font.pixelSize: 11; color: "#888"; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
-                                Text { width: 80; text: "Size"; font.pixelSize: 11; color: "#888"; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
-                            }
-                        }
-                        
-                        ListView {
-                            width: parent.width
-                            height: parent.height - 32
-                            clip: true
-                            model: getFilteredFiles()
-                            
-                            delegate: Rectangle {
-                                id: detailDelegate
-                                width: ListView.view.width
-                                height: 34
-                                
-                                property bool itemSelected: isFileSelected(modelData)
-                                
-                                color: itemSelected ? Qt.rgba(0.25, 0.45, 0.75, 0.5) : 
-                                       (detailMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.06) : "transparent")
-                                border.width: itemSelected ? 1 : 0
-                                border.color: Theme.accentColor
-                                
+                                anchors.leftMargin: 8
                                 Row {
-                                    anchors.fill: parent
-                                    anchors.leftMargin: 8
-                                    spacing: 0
-                                    
-                                    // Checkbox
-                                    Rectangle {
-                                        width: 28
-                                        height: 28
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        color: "transparent"
-                                        visible: showCheckboxes || itemSelected || detailMouse.containsMouse
-                                        
-                                        Rectangle {
-                                            anchors.centerIn: parent
-                                            width: 18
-                                            height: 18
-                                            radius: 9
-                                            color: itemSelected ? Theme.accentColor : Qt.rgba(0.2, 0.22, 0.26, 0.9)
-                                            border.width: itemSelected ? 0 : 2
-                                            border.color: Qt.rgba(1, 1, 1, 0.3)
-                                            
-                                            Text {
-                                                anchors.centerIn: parent
-                                                text: "✓"
-                                                font.pixelSize: 10
-                                                font.bold: true
-                                                color: "#ffffff"
-                                                visible: itemSelected
-                                            }
-                                            
-                                            MouseArea {
-                                                anchors.fill: parent
-                                                cursorShape: Qt.PointingHandCursor
-                                                onClicked: toggleFileSelection(modelData)
-                                            }
-                                        }
+                                    width: row.usable * 0.42
+                                    rightPadding: 12
+                                    spacing: 8
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    Icon { name: modelData.icon; size: UI.px(15); anchors.verticalCenter: parent.verticalCenter }
+                                    Text { font.weight: UI.textWeight; width: parent.width - 30; text: modelData.name; color: UI.text; font.pixelSize: UI.px(12.5); elide: Text.ElideMiddle; anchors.verticalCenter: parent.verticalCenter }
+                                }
+                                Text { font.weight: UI.textWeight; width: row.usable * 0.27; rightPadding: 12; text: UI.fmtDate(ex.inTrash ? modelData.deletedAt : modelData.modified); color: UI.textDim; font.pixelSize: UI.px(12); elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter }
+                                Text {
+                                    font.weight: UI.textWeight
+                                    width: row.usable * 0.17
+                                    rightPadding: 12
+                                    text: ex.inTrash ? (Storage.parentOf(modelData.originalPath || "/Documents/x") || "/")
+                                                     : (modelData.isDir ? "Folder" : (modelData.ext ? modelData.ext.toUpperCase() : modelData.kind))
+                                    color: UI.textDim; font.pixelSize: UI.px(12); elide: Text.ElideMiddle
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                Text { font.weight: UI.textWeight; width: row.usable * 0.14; elide: Text.ElideRight; text: modelData.isDir ? "" : UI.fmtSize(modelData.size); color: UI.textDim; font.pixelSize: UI.px(12); anchors.verticalCenter: parent.verticalCenter }
+                            }
+                            MouseArea {
+                                id: rowMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                preventStealing: true
+                                property point pressPos: Qt.point(0, 0)
+                                property bool dragging: false
+                                property bool deferSelect: false
+                                onPressed: function (mouse) {
+                                    pressPos = Qt.point(mouse.x, mouse.y)
+                                    dragging = false
+                                    deferSelect = row.sel && mouse.modifiers === Qt.NoModifier
+                                    if (!deferSelect) ex.clickItem(index, mouse.modifiers)
+                                }
+                                onPositionChanged: function (mouse) {
+                                    if (!(mouse.buttons & Qt.LeftButton) || ex.inTrash) return
+                                    var p = mapToItem(null, mouse.x, mouse.y)
+                                    if (!dragging) {
+                                        if (Math.abs(mouse.x - pressPos.x) + Math.abs(mouse.y - pressPos.y) < 8) return
+                                        dragging = true
+                                        ex.startDrag(modelData, p.x, p.y)
                                     }
-                                    
-                                    // Icon and Name
-                                    Row {
-                                        width: 230
-                                        spacing: 8
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        
-                                        Text { text: getFileIcon(modelData); font.pixelSize: 14 }
-                                        Text { 
-                                            text: modelData.name
-                                            font.pixelSize: 12
-                                            color: "#ffffff"
-                                            elide: Text.ElideMiddle
-                                            width: 200
-                                        }
-                                    }
-                                    
-                                    Text { 
-                                        width: 140
-                                        text: "—"
-                                        font.pixelSize: 11
-                                        color: "#777"
-                                        anchors.verticalCenter: parent.verticalCenter
-                                    }
-                                    Text { 
-                                        width: 100
-                                        text: getFileType(modelData)
-                                        font.pixelSize: 11
-                                        color: "#777"
-                                        anchors.verticalCenter: parent.verticalCenter
-                                    }
-                                    Text { 
-                                        width: 80
-                                        text: modelData.isDirectory ? "—" : formatFileSize(modelData.size || 0)
-                                        font.pixelSize: 11
-                                        color: "#777"
-                                        anchors.verticalCenter: parent.verticalCenter
+                                    UI.wm.moveFileDrag(p.x, p.y, mouse.modifiers)
+                                }
+                                onReleased: function (mouse) {
+                                    if (dragging) {
+                                        dragging = false
+                                        var p = mapToItem(null, mouse.x, mouse.y)
+                                        UI.wm.endFileDrag(p.x, p.y, mouse.modifiers)
+                                    } else if (deferSelect) {
+                                        ex.clickItem(index, 0)
                                     }
                                 }
-                                
-                                MouseArea {
-                                    id: detailMouse
-                                    anchors.fill: parent
-                                    anchors.leftMargin: 28 // Leave room for checkbox
-                                    hoverEnabled: true
-                                    acceptedButtons: Qt.LeftButton | Qt.RightButton
-                                    
-                                    onClicked: function(mouse) {
-                                        bgContextMenu.visible = false
-                                        fileContextMenu.visible = false
-                                        
-                                        if (mouse.button === Qt.RightButton) {
-                                            if (!isFileSelected(modelData)) {
-                                                selectFile(modelData, false)
-                                            }
-                                            fileContextMenu.x = mouse.x
-                                            fileContextMenu.y = mouse.y + parent.y + 120
-                                            fileContextMenu.visible = true
-                                        } else {
-                                            var ctrlHeld = (mouse.modifiers & Qt.ControlModifier)
-                                            selectFile(modelData, ctrlHeld)
-                                        }
-                                    }
-                                    onDoubleClicked: openFile(modelData)
+                                onCanceled: { if (dragging) { dragging = false; UI.wm.cancelFileDrag() } }
+                                onDoubleClicked: function (mouse) { if (mouse.button === Qt.LeftButton) ex.open(modelData) }
+                            }
+                            DropArea {
+                                id: rowDrop
+                                anchors.fill: parent
+                                enabled: modelData.isDir && !ex.inTrash
+                                onEntered: function (drag) {
+                                    var ok = UI.wm.canDropOn(drag, modelData.path)
+                                    drag.accepted = ok
+                                    if (ok) UI.wm.setDropTarget(modelData.name)
                                 }
+                                onExited: UI.wm.setDropTarget("")
+                                onDropped: function (drop) { if (UI.wm.dropInto(modelData.path, drop)) drop.acceptProposedAction() }
                             }
                         }
                     }
-                    
-                    // Empty State
+
                     Column {
+                        visible: ex.shown.length === 0
                         anchors.centerIn: parent
                         spacing: 8
-                        visible: getFilteredFiles().length === 0
-                        
-                        Text { anchors.horizontalCenter: parent.horizontalCenter; text: "📂"; font.pixelSize: 56; opacity: 0.25 }
-                        Text { anchors.horizontalCenter: parent.horizontalCenter; text: searchQuery ? "No matching files" : "Empty folder"; font.pixelSize: 13; color: "#666" }
-                        Text { anchors.horizontalCenter: parent.horizontalCenter; text: "Right-click to create"; font.pixelSize: 11; color: "#555"; visible: !searchQuery }
+                        Icon { anchors.horizontalCenter: parent.horizontalCenter; name: ex.filter ? "search" : (ex.inTrash ? "place-trash" : "place-folder"); size: 64; opacity: 0.85 }
+                        Text {
+                            font.weight: UI.textWeight
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: ex.filter ? "Nothing matches “" + ex.filter + "”" : (ex.inTrash ? "The Recycle Bin is empty" : "This folder is empty")
+                            color: UI.textDim; font.pixelSize: UI.px(13)
+                        }
+                        Text {
+                            font.weight: UI.textWeight
+                            visible: !ex.filter && !ex.inTrash
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: "Right-click to create a folder or file"
+                            color: UI.textFaint; font.pixelSize: UI.px(11.5)
+                        }
                     }
-                }
-                
-                // ===== DETAILS PANE (Right Sidebar) =====
-                Rectangle {
-                    Layout.preferredWidth: showDetailsPane ? 220 : 0
-                    Layout.fillHeight: true
-                    color: Qt.rgba(0.06, 0.07, 0.09, 0.95)
-                    visible: showDetailsPane
-                    clip: true
-                    
-                    Behavior on Layout.preferredWidth { NumberAnimation { duration: 150 } }
-                    
-                    ColumnLayout {
+
+                    // Routes clicks: presses on items fall through to the delegates,
+                    // presses on empty space clear the selection / open the folder menu.
+                    MouseArea {
+                        id: bgMouse
                         anchors.fill: parent
-                        anchors.margins: 16
-                        spacing: 16
-                        
-                        // Header
-                        Text {
-                            text: {
-                                if (selectedFiles.length > 1) {
-                                    return selectedFiles.length + " items selected"
-                                } else if (selectedFile) {
-                                    return selectedFile.name
-                                } else {
-                                    return (currentPath.split("/").pop() || "Storage") + " (" + files.length + " items)"
-                                }
-                            }
-                            font.pixelSize: 13
-                            font.weight: Font.Medium
-                            color: selectedFiles.length > 1 ? Theme.accentColor : "#ffffff"
-                            wrapMode: Text.Wrap
-                            Layout.fillWidth: true
+                        z: 10
+                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                        function indexAtPoint(mx, my) {
+                            var v = ex.viewMode === "grid" ? grid : list
+                            return v.indexAt(mx - v.x + v.contentX, my - v.y + v.contentY)
                         }
-                        
-                        // File Preview / Icon
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 120
-                            color: Qt.rgba(0, 0, 0, 0.2)
-                            radius: 8
-                            
-                            Item {
-                                anchors.centerIn: parent
-                                
-                                // Multi-select icon stack
-                                Row {
-                                    anchors.centerIn: parent
-                                    spacing: -20
-                                    visible: selectedFiles.length > 1
-                                    
-                                    Repeater {
-                                        model: Math.min(selectedFiles.length, 3)
-                                        
-                                        Rectangle {
-                                            width: 50
-                                            height: 50
-                                            radius: 8
-                                            color: Qt.rgba(0.15, 0.18, 0.22, 1)
-                                            border.width: 2
-                                            border.color: Theme.accentColor
-                                            
-                                            Text {
-                                                anchors.centerIn: parent
-                                                text: selectedFiles[index] ? getFileIcon(selectedFiles[index]) : "📄"
-                                                font.pixelSize: 24
-                                            }
-                                        }
-                                    }
+
+                        // ---- drag on empty space: selection rectangle
+                        property bool banding: false
+                        property bool bandShown: false
+                        property real startX: 0      // band start in *content* coordinates (survives scrolling)
+                        property real startY: 0
+                        property real curX: 0
+                        property real curY: 0
+                        property var baseSel: ({})
+                        function activeView() { return ex.viewMode === "grid" ? grid : list }
+                        function updateBand() {
+                            var v = activeView()
+                            var x1 = startX, y1 = startY
+                            var x2 = curX - v.x + v.contentX, y2 = curY - v.y + v.contentY
+                            var L = Math.min(x1, x2), R = Math.max(x1, x2), T = Math.min(y1, y2), B = Math.max(y1, y2)
+                            var s = Object.assign({}, baseSel), items = ex.shown
+                            if (v === grid) {
+                                var cw = grid.cellWidth, ch = grid.cellHeight
+                                var cols = Math.max(1, Math.floor(grid.width / cw))
+                                for (var i = 0; i < items.length; i++) {
+                                    var ix = (i % cols) * cw, iy = Math.floor(i / cols) * ch
+                                    if (ix + 6 < R && ix + cw - 6 > L && iy + 4 < B && iy + ch - 4 > T) s[items[i].path] = true
                                 }
-                                
-                                // Single selection icon
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: selectedFile ? getFileIcon(selectedFile) : "📁"
-                                    font.pixelSize: 56
-                                    visible: selectedFiles.length <= 1 && (!selectedFile || !selectedFile.isImage)
-                                }
-                                
-                                // Image preview (single selection only)
-                                Image {
-                                    anchors.centerIn: parent
-                                    width: 100
-                                    height: 100
-                                    source: (selectedFiles.length === 1 && selectedFile && selectedFile.isImage) ? Storage.getFileUrl(selectedFile.path) : ""
-                                    fillMode: Image.PreserveAspectFit
-                                    visible: selectedFiles.length === 1 && selectedFile && selectedFile.isImage && status === Image.Ready
-                                    asynchronous: true
-                                }
+                            } else {
+                                var rh = UI.px(32)
+                                var first = Math.max(0, Math.floor(T / rh)), last = Math.min(items.length - 1, Math.floor(B / rh))
+                                for (var j = first; j <= last; j++) s[items[j].path] = true
+                            }
+                            ex.selected = s
+                            // auto-scroll when dragging past the top/bottom edge
+                            var edge = UI.px(28)
+                            bandScroll.speed = curY < v.y + edge ? -Math.min(24, (v.y + edge - curY) / 2)
+                                             : (curY > v.y + v.height - edge ? Math.min(24, (curY - (v.y + v.height - edge)) / 2) : 0)
+                            if (bandScroll.speed !== 0) bandScroll.start(); else bandScroll.stop()
+                        }
+                        onPositionChanged: function (mouse) {
+                            if (!banding) return
+                            curX = mouse.x; curY = mouse.y
+                            if (!bandShown && Math.abs(curX - (startX - activeView().contentX + activeView().x)) + Math.abs(curY - (startY - activeView().contentY + activeView().y)) > 4) bandShown = true
+                            if (bandShown) updateBand()
+                        }
+                        onReleased: { banding = false; bandShown = false; bandScroll.stop() }
+                        onCanceled: { banding = false; bandShown = false; bandScroll.stop() }
+                        Timer {
+                            id: bandScroll
+                            interval: 16
+                            repeat: true
+                            property real speed: 0
+                            onTriggered: {
+                                var v = bgMouse.activeView()
+                                v.contentY = Math.max(0, Math.min(v.contentY + speed, Math.max(0, v.contentHeight - v.height)))
+                                bgMouse.updateBand()
                             }
                         }
-                        
-                        // File Info
-                        Column {
-                            Layout.fillWidth: true
-                            spacing: 12
-                            visible: selectedFile !== null
-                            
-                            DetailRow { label: "Type"; value: selectedFile ? getFileType(selectedFile) : "" }
-                            DetailRow { label: "Size"; value: selectedFile && !selectedFile.isDirectory ? formatFileSize(selectedFile.size || 0) : "—" }
-                            DetailRow { label: "Location"; value: currentPath }
+                        Rectangle {   // the band itself (follows content as it scrolls)
+                            visible: bgMouse.bandShown
+                            readonly property var v: bgMouse.activeView()
+                            readonly property real sx: bgMouse.startX - v.contentX + v.x
+                            readonly property real sy: bgMouse.startY - v.contentY + v.y
+                            x: Math.min(sx, bgMouse.curX)
+                            y: Math.min(sy, bgMouse.curY)
+                            width: Math.abs(bgMouse.curX - sx)
+                            height: Math.abs(bgMouse.curY - sy)
+                            color: UI.alpha(UI.accent, 0.16)
+                            border.color: UI.alpha(UI.accent, 0.75)
+                            border.width: 1
+                            radius: 3
                         }
-                        
-                        // Hint when nothing selected
-                        Text {
-                            visible: selectedFile === null
-                            text: "Select a file to see more information and share your content."
-                            font.pixelSize: 11
-                            color: "#888"
-                            wrapMode: Text.Wrap
-                            Layout.fillWidth: true
+                        onPressed: function (mouse) {
+                            ex.forceActiveFocus()
+                            var idx = indexAtPoint(mouse.x, mouse.y)
+                            if (mouse.button === Qt.RightButton) {
+                                if (idx >= 0) ex.itemMenu(ex.shown[idx], bgMouse, mouse.x, mouse.y)
+                                else ex.backgroundMenu(bgMouse, mouse.x, mouse.y)
+                                return
+                            }
+                            if (idx >= 0) { mouse.accepted = false; return }
+                            // empty space: start a selection rectangle (Ctrl keeps the current selection)
+                            var v = activeView()
+                            startX = mouse.x - v.x + v.contentX
+                            startY = mouse.y - v.y + v.contentY
+                            curX = mouse.x; curY = mouse.y
+                            baseSel = (mouse.modifiers & Qt.ControlModifier) ? Object.assign({}, ex.selected) : ({})
+                            if (!(mouse.modifiers & Qt.ControlModifier)) ex.selected = {}
+                            banding = true
+                            bandShown = false
                         }
-                        
-                        Item { Layout.fillHeight: true }
+                        onWheel: function (wheel) { wheel.accepted = false }
                     }
                 }
-            }
-            
-            // ===== STATUS BAR =====
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 28
-                color: Qt.rgba(0.06, 0.07, 0.09, 0.98)
-                
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 16
-                    anchors.rightMargin: 16
-                    
-                    Text { 
-                        text: getFilteredFiles().length + " items"
-                        font.pixelSize: 11
-                        color: "#888"
-                    }
-                    
-                    Rectangle { width: 1; height: 14; color: "#333" }
-                    
-                    // Show selection info
-                    Text { 
-                        visible: selectedFiles.length > 0
-                        text: {
-                            if (selectedFiles.length === 1) {
-                                return "Selected: " + (selectedFile ? selectedFile.name : "")
-                            } else {
-                                return selectedFiles.length + " items selected"
-                            }
-                        }
-                        font.pixelSize: 11
-                        color: selectedFiles.length > 1 ? Theme.accentColor : "#aaa"
-                        font.bold: selectedFiles.length > 1
-                        elide: Text.ElideMiddle
-                        Layout.fillWidth: true
-                    }
-                    
-                    Item { Layout.fillWidth: true; visible: selectedFiles.length === 0 }
-                    
-                    // Checkbox mode toggle
-                    Rectangle {
-                        width: 24
-                        height: 24
-                        radius: 4
-                        color: cbModeMouse.containsMouse ? Qt.rgba(1,1,1,0.1) : "transparent"
-                        
-                        Text {
-                            anchors.centerIn: parent
-                            text: "☑"
-                            font.pixelSize: 14
-                            color: showCheckboxes ? Theme.accentColor : "#666"
-                        }
-                        
-                        MouseArea {
-                            id: cbModeMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: showCheckboxes = !showCheckboxes
-                            
-                            ToolTip.visible: containsMouse
-                            ToolTip.text: "Toggle checkbox selection"
-                            ToolTip.delay: 500
-                        }
-                    }
-                    
-                    Rectangle { width: 1; height: 14; color: "#333" }
-                    
-                    // View mode indicator
+
+                // ------------------------------------------------------ status bar
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: UI.px(26)
+                    color: Qt.rgba(0, 0, 0, 0.12)
                     Text {
-                        text: viewMode === "grid" ? "⊞ Grid" : "☰ Details"
-                        font.pixelSize: 10
-                        color: "#666"
+                        font.weight: UI.textWeight
+                        anchors.left: parent.left
+                        anchors.leftMargin: 12
+                        anchors.verticalCenter: parent.verticalCenter
+                        color: UI.textFaint
+                        font.pixelSize: UI.px(11.5)
+                        text: {
+                            var t = ex.shown.length + (ex.shown.length === 1 ? " item" : " items")
+                            if (ex.selectedCount > 0) {
+                                var size = 0
+                                ex.selectedEntries().forEach(function (e) { size += e.size })
+                                t += "   ·   " + ex.selectedCount + " selected" + (size > 0 ? " (" + UI.fmtSize(size) + ")" : "")
+                            }
+                            if (Storage.canPaste) t += "   ·   " + Storage.clipboardPaths.length + " on clipboard (" + Storage.clipboardMode + ")"
+                            return t
+                        }
                     }
                 }
             }
-        }
-    }
-    
-    // ===== CONTEXT MENUS =====
-    Rectangle {
-        id: fileContextMenu
-        visible: false
-        width: 200
-        height: menuColumn.height + 12
-        radius: 8
-        z: 1000
-        
-        color: Qt.rgba(0.12, 0.14, 0.18, 0.98)
-        border.width: 1
-        border.color: Qt.rgba(1, 1, 1, 0.15)
-        
-        // Shadow
-        Rectangle {
-            anchors.fill: parent
-            anchors.margins: -6
-            radius: 12
-            color: Qt.rgba(0, 0, 0, 0.5)
-            z: -1
-        }
-        
-        Column {
-            id: menuColumn
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.margins: 6
-            spacing: 2
-            
-            PopupMenuItem {
-                text: currentPath === "/Recycle Bin" ? "Restore" : "Open"
-                icon: currentPath === "/Recycle Bin" ? "♻" : "📂"
-                onClicked: { 
-                    fileContextMenu.visible = false
-                    if (currentPath === "/Recycle Bin") {
-                        Storage.restoreFromTrash(selectedFile.trashName)
-                        loadFolder(currentPath)
-                    } else {
-                        openFile(selectedFile)
-                    }
+
+            // ------------------------------------------------------ details pane
+            Rectangle {
+                id: details
+                visible: ex.showDetails && ex.width > 760
+                Layout.fillHeight: true
+                Layout.preferredWidth: UI.px(270)
+                color: Qt.rgba(0, 0, 0, 0.14)
+                Rectangle { width: 1; height: parent.height; color: UI.border }
+
+                readonly property var sel: ex.selectedEntries()
+                readonly property var e: sel.length === 1 ? sel[0] : null
+                readonly property var info: e ? Storage.quickInfo(e.path) : (sel.length === 0 ? Storage.quickInfo(ex.path) : ({}))
+                readonly property string kind: info.kind || ""
+                readonly property var meta: e && (kind === "video" || kind === "audio" || kind === "image") ? Thumbs.meta(e.path) : ({})
+                readonly property var dims: e && kind === "image" ? Storage.imageSize(e.path) : ({ w: 0, h: 0 })
+                readonly property string preview: e && (kind === "text" || kind === "code") ? Storage.textPreview(e.path, 1200) : ""
+                property string thumb: ""
+                onEChanged: details.thumb = details.e ? Thumbs.request(details.e.path) : ""
+                Connections { target: Thumbs; function onReady(p, url) { if (details.e && p === details.e.path) { details.thumb = url; details.metaRev++ } } }
+                property int metaRev: 0
+                readonly property int totalSize: { var t = 0; sel.forEach(function (x) { t += x.size }); return t }
+
+                function fmtDuration(ms) {
+                    if (!(ms > 0)) return ""
+                    var s = Math.round(ms / 1000), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60
+                    return (h ? h + ":" + (m < 10 ? "0" : "") : "") + m + ":" + (x < 10 ? "0" : "") + x
                 }
-            }
-            
-            PopupMenuItem {
-                text: "Open with GlassPad"
-                icon: "📝"
-                visible: selectedFile && !selectedFile.isDirectory && !isImageFile(selectedFile.name)
-                onClicked: { 
-                    fileContextMenu.visible = false
-                    explorer.openFileRequest(selectedFile.path, selectedFile.name, false, true)
-                }
-            }
-            
-            Rectangle { width: parent.width - 12; height: 1; color: Qt.rgba(1,1,1,0.1); anchors.horizontalCenter: parent.horizontalCenter }
-            
-            PopupMenuItem {
-                text: "Set as Wallpaper"
-                icon: "🖼"
-                visible: selectedFile && isImageFile(selectedFile.name)
-                onClicked: { 
-                    fileContextMenu.visible = false
-                    Storage.setWallpaper(selectedFile.path)
-                    explorer.setAsWallpaper(selectedFile.path)
-                }
-            }
-            
-            Rectangle { width: parent.width - 12; height: 1; color: Qt.rgba(1,1,1,0.1); anchors.horizontalCenter: parent.horizontalCenter; visible: selectedFile && isImageFile(selectedFile.name) }
-            
-            PopupMenuItem {
-                text: "Cut"
-                icon: "✂"
-                shortcut: "Ctrl+X"
-                enabled: currentPath !== "/Recycle Bin"
-                onClicked: { fileContextMenu.visible = false; Storage.setClipboard(selectedFile.path, "cut") }
-            }
-            PopupMenuItem {
-                text: "Copy"
-                icon: "📋"
-                shortcut: "Ctrl+C"
-                enabled: currentPath !== "/Recycle Bin"
-                onClicked: { fileContextMenu.visible = false; Storage.setClipboard(selectedFile.path, "copy") }
-            }
-            PopupMenuItem {
-                text: "Rename"
-                icon: "✏"
-                shortcut: "F2"
-                onClicked: { 
-                    fileContextMenu.visible = false
-                    renameDialog.visible = true
-                    renameInput.text = selectedFile.name
-                    renameInput.selectAll()
-                    renameInput.forceActiveFocus()
-                }
-            }
-            
-            Rectangle { width: parent.width - 12; height: 1; color: Qt.rgba(1,1,1,0.1); anchors.horizontalCenter: parent.horizontalCenter }
-            
-            PopupMenuItem {
-                text: currentPath === "/Recycle Bin" ? "Delete Permanently" : "Delete"
-                icon: "🗑"
-                shortcut: "Del"
-                onClicked: { fileContextMenu.visible = false; deleteDialog.visible = true }
-            }
-        }
-    }
-    
-    // Background context menu
-    Rectangle {
-        id: bgContextMenu
-        visible: false
-        width: 180
-        height: bgMenuColumn.height + 12
-        radius: 8
-        z: 1000
-        
-        color: Qt.rgba(0.12, 0.14, 0.18, 0.98)
-        border.width: 1
-        border.color: Qt.rgba(1, 1, 1, 0.15)
-        
-        Rectangle {
-            anchors.fill: parent
-            anchors.margins: -6
-            radius: 12
-            color: Qt.rgba(0, 0, 0, 0.5)
-            z: -1
-        }
-        
-        Column {
-            id: bgMenuColumn
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.margins: 6
-            spacing: 2
-            
-            PopupMenuItem { text: "New Folder"; icon: "📁"; onClicked: { bgContextMenu.visible = false; createNewFolder() } }
-            PopupMenuItem { text: "New Text File"; icon: "📄"; onClicked: { bgContextMenu.visible = false; createNewFile() } }
-            Rectangle { width: parent.width - 12; height: 1; color: Qt.rgba(1,1,1,0.1); anchors.horizontalCenter: parent.horizontalCenter }
-            PopupMenuItem { text: "Refresh"; icon: "⟳"; shortcut: "F5"; onClicked: { bgContextMenu.visible = false; loadFolder(currentPath) } }
-            PopupMenuItem { 
-                text: "Paste"
-                icon: "📥"
-                shortcut: "Ctrl+V"
-                enabled: hasClipboard && currentPath !== "/Recycle Bin"
-                onClicked: { bgContextMenu.visible = false; if (Storage.paste(currentPath)) loadFolder(currentPath) }
-            }
-        }
-    }
-    
-    // ===== COMPONENTS =====
-    component ToolbarButton: Rectangle {
-        property string icon
-        property string tooltip
-        property bool enabled: true
-        signal clicked()
-        
-        width: 32
-        height: 32
-        radius: 6
-        color: enabled && tbMouse.containsMouse ? Qt.rgba(1,1,1,0.1) : "transparent"
-        opacity: enabled ? 1 : 0.4
-        
-        Text { anchors.centerIn: parent; text: icon; font.pixelSize: 14; color: "#fff" }
-        
-        MouseArea {
-            id: tbMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-            onClicked: if (enabled) parent.clicked()
-        }
-        
-        ToolTip.visible: tbMouse.containsMouse && tooltip
-        ToolTip.text: tooltip
-        ToolTip.delay: 500
-    }
-    
-    component ToolbarSeparator: Rectangle {
-        width: 1
-        height: 24
-        color: Qt.rgba(1, 1, 1, 0.15)
-    }
-    
-    component ActionButton: Rectangle {
-        property string icon
-        property string text
-        property string shortcut: ""
-        property bool enabled: true
-        property bool hasDropdown: false
-        signal clicked()
-        
-        width: actionRow.width + 16
-        height: 28
-        radius: 4
-        color: enabled && abMouse.containsMouse ? Qt.rgba(1,1,1,0.08) : "transparent"
-        opacity: enabled ? 1 : 0.4
-        
-        Row {
-            id: actionRow
-            anchors.centerIn: parent
-            spacing: 6
-            
-            Text { text: icon; font.pixelSize: 12 }
-            Text { text: parent.parent.text; font.pixelSize: 11; color: "#ccc" }
-            Text { text: "▾"; font.pixelSize: 8; color: "#888"; visible: hasDropdown }
-        }
-        
-        MouseArea {
-            id: abMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-            onClicked: if (enabled) parent.clicked()
-        }
-    }
-    
-    component PopupMenuItem: Rectangle {
-        property string text
-        property string icon
-        property string shortcut: ""
-        property bool enabled: true
-        signal clicked()
-        
-        width: parent.width - 12
-        height: 30
-        radius: 4
-        color: enabled && pmMouse.containsMouse ? Qt.rgba(0.3, 0.5, 0.8, 0.4) : "transparent"
-        opacity: enabled ? 1 : 0.4
-        
-        Row {
-            anchors.fill: parent
-            anchors.leftMargin: 10
-            spacing: 10
-            
-            Text { anchors.verticalCenter: parent.verticalCenter; text: icon; font.pixelSize: 12; width: 16 }
-            Text { anchors.verticalCenter: parent.verticalCenter; text: parent.parent.text; font.pixelSize: 12; color: "#fff" }
-        }
-        
-        Text {
-            anchors.right: parent.right
-            anchors.rightMargin: 10
-            anchors.verticalCenter: parent.verticalCenter
-            text: shortcut
-            font.pixelSize: 10
-            color: "#666"
-            visible: shortcut !== ""
-        }
-        
-        MouseArea {
-            id: pmMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-            onClicked: if (enabled) parent.clicked()
-        }
-    }
-    
-    component FileGridItem: Rectangle {
-        id: fileGridItem
-        property var file
-        property bool isSelected: false
-        property bool showCheckbox: false
-        signal clicked(var mouse)
-        signal checkboxToggled()
-        signal doubleClicked()
-        
-        width: 95
-        height: 95
-        radius: 8
-        color: isSelected ? Qt.rgba(0.25, 0.45, 0.75, 0.5) : (fgMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.1) : "transparent")
-        border.width: isSelected ? 2 : (fgMouse.containsMouse ? 1 : 0)
-        border.color: isSelected ? Theme.accentColor : Qt.rgba(1, 1, 1, 0.2)
-        
-        Drag.active: fgMouse.drag.active
-        Drag.hotSpot.x: width / 2
-        Drag.hotSpot.y: height / 2
-        Drag.mimeData: { "path": file.path, "name": file.name, "isDir": file.isDirectory }
-        
-        // Checkbox (Windows 11 style - circular)
-        Rectangle {
-            id: checkbox
-            anchors.left: parent.left
-            anchors.top: parent.top
-            anchors.margins: 6
-            width: 20
-            height: 20
-            radius: 10
-            visible: showCheckbox || isSelected || fgMouse.containsMouse
-            color: isSelected ? Theme.accentColor : Qt.rgba(0.2, 0.22, 0.26, 0.9)
-            border.width: isSelected ? 0 : 2
-            border.color: Qt.rgba(1, 1, 1, 0.4)
-            z: 10
-            
-            Text {
-                anchors.centerIn: parent
-                text: "✓"
-                font.pixelSize: 12
-                font.bold: true
-                color: "#ffffff"
-                visible: isSelected
-            }
-            
-            MouseArea {
-                anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                onClicked: function(mouse) {
-                    mouse.accepted = true
-                    fileGridItem.checkboxToggled()
-                }
-            }
-            
-            Behavior on opacity { NumberAnimation { duration: 100 } }
-        }
-        
-        Column {
-            anchors.centerIn: parent
-            anchors.verticalCenterOffset: 2
-            spacing: 6
-            opacity: Storage.clipboardPath === file.path && Storage.clipboardOp === "cut" ? 0.4 : 1.0
-            
-            Item {
-                anchors.horizontalCenter: parent.horizontalCenter
-                width: 48
-                height: 48
-                
-                Text {
-                    anchors.centerIn: parent
-                    text: getFileIcon(file)
-                    font.pixelSize: 36
-                    visible: !file.isImage
-                }
-                
-                Image {
+
+                Flickable {
                     anchors.fill: parent
-                    source: file.isImage ? Storage.getFileUrl(file.path) : ""
-                    fillMode: Image.PreserveAspectCrop
-                    visible: file.isImage && status === Image.Ready
-                    asynchronous: true
-                }
-            }
-            
-            Text {
-                anchors.horizontalCenter: parent.horizontalCenter
-                width: 85
-                text: file.name
-                font.pixelSize: 11
-                color: "#ffffff"
-                elide: Text.ElideMiddle
-                horizontalAlignment: Text.AlignHCenter
-            }
-        }
-        
-        MouseArea {
-            id: fgMouse
-            anchors.fill: parent
-            anchors.topMargin: 26 // Leave room for checkbox
-            hoverEnabled: true
-            acceptedButtons: Qt.LeftButton | Qt.RightButton
-            drag.target: parent
-            drag.threshold: 10
-            
-            onClicked: function(mouse) { fileGridItem.clicked(mouse) }
-            onDoubleClicked: fileGridItem.doubleClicked()
-        }
-        
-        // Also handle hover on whole item for checkbox visibility
-        MouseArea {
-            anchors.fill: parent
-            hoverEnabled: true
-            propagateComposedEvents: true
-            acceptedButtons: Qt.NoButton
-        }
-        
-        scale: fgMouse.pressed ? 0.96 : 1.0
-        Behavior on scale { NumberAnimation { duration: 60 } }
-        Behavior on color { ColorAnimation { duration: 100 } }
-    }
-    
-    component DetailRow: Row {
-        property string label
-        property string value
-        
-        spacing: 8
-        
-        Text { text: label + ":"; font.pixelSize: 11; color: "#888"; width: 60 }
-        Text { text: value; font.pixelSize: 11; color: "#ccc"; width: 130; elide: Text.ElideMiddle }
-    }
-    
-    // ===== DIALOGS =====
-    Rectangle {
-        id: newItemDialog
-        anchors.fill: parent
-        color: Qt.rgba(0, 0, 0, 0.6)
-        visible: false
-        z: 2000
-        
-        property bool isFolder: true
-        
-        MouseArea { anchors.fill: parent; onClicked: newItemDialog.visible = false }
-        
-        Rectangle {
-            anchors.centerIn: parent
-            width: 360
-            height: 160
-            radius: 12
-            color: Qt.rgba(0.12, 0.14, 0.18, 0.98)
-            border.width: 1
-            border.color: Qt.rgba(1, 1, 1, 0.15)
-            
-            MouseArea { anchors.fill: parent }
-            
-            Column {
-                anchors.fill: parent
-                anchors.margins: 20
-                spacing: 16
-                
-                Text {
-                    text: newItemDialog.isFolder ? "📁 New Folder" : "📄 New File"
-                    font.pixelSize: 16
-                    font.bold: true
-                    color: "#ffffff"
-                }
-                
-                TextField {
-                    id: newItemInput
-                    width: parent.width
-                    height: 40
-                    font.pixelSize: 13
-                    color: "#ffffff"
-                    placeholderText: newItemDialog.isFolder ? "Folder name" : "File name"
-                    placeholderTextColor: "#666"
-                    background: Rectangle {
-                        color: Qt.rgba(0, 0, 0, 0.3)
-                        radius: 6
-                        border.width: newItemInput.activeFocus ? 2 : 1
-                        border.color: newItemInput.activeFocus ? Theme.accentColor : Qt.rgba(1, 1, 1, 0.15)
-                    }
-                    
-                    Keys.onReturnPressed: doCreate()
-                    Keys.onEscapePressed: newItemDialog.visible = false
-                    
-                    function doCreate() {
-                        var name = newItemInput.text.trim()
-                        if (name) {
-                            var fullPath = currentPath === "/" ? "/" + name : currentPath + "/" + name
-                            if (newItemDialog.isFolder) {
-                                Storage.createDirectory(fullPath)
-                            } else {
-                                Storage.writeFile(fullPath, "")
+                    anchors.margins: 14
+                    contentHeight: dcol.implicitHeight
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    Column {
+                        id: dcol
+                        width: parent.width
+                        spacing: 12
+
+                        // preview area
+                        Rectangle {
+                            width: parent.width
+                            height: width * 0.68
+                            radius: UI.radius
+                            color: Qt.rgba(0, 0, 0, 0.25)
+                            border.color: UI.border
+                            clip: true
+                            Image {
+                                id: dImg
+                                anchors.fill: parent
+                                anchors.margins: 1
+                                visible: details.thumb !== "" && status === Image.Ready
+                                source: details.kind === "image" && details.e ? Storage.fileUrl(details.e.path) : details.thumb
+                                sourceSize.width: 540
+                                fillMode: details.kind === "audio" ? Image.PreserveAspectCrop : Image.PreserveAspectFit
+                                asynchronous: true
                             }
-                            newItemDialog.visible = false
-                            loadFolder(currentPath)
+                            Rectangle {
+                                visible: dImg.visible && details.kind === "video"
+                                anchors.centerIn: parent
+                                width: 44; height: 44; radius: 22
+                                color: Qt.rgba(0, 0, 0, 0.55)
+                                Icon { anchors.centerIn: parent; anchors.horizontalCenterOffset: 2; name: "play"; size: 22 }
+                            }
+                            Text {
+                                font.weight: UI.textWeight
+                                visible: details.preview !== ""
+                                anchors.fill: parent
+                                anchors.margins: 10
+                                // code gets syntax colors; plain text stays plain
+                                readonly property string codePath: details.e && Syntax.languageFor(details.e.path) !== "" ? details.e.path : ""
+                                text: codePath !== "" ? Syntax.toHtml(details.preview, codePath, 40) : details.preview
+                                textFormat: codePath !== "" ? Text.RichText : Text.PlainText
+                                color: UI.textDim
+                                font.family: UI.monoFont
+                                font.pixelSize: UI.px(10)
+                                wrapMode: Text.WrapAnywhere
+                                clip: true
+                            }
+                            Icon {
+                                visible: !dImg.visible && details.preview === ""
+                                anchors.centerIn: parent
+                                name: details.sel.length > 1 ? "file-generic" : (details.info.icon || "place-folder")
+                                size: parent.height * 0.55
+                            }
+                            Rectangle {
+                                visible: details.sel.length > 1
+                                anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 10
+                                width: countText.implicitWidth + 16; height: 24; radius: 12
+                                color: UI.accent
+                                Text { id: countText; anchors.centerIn: parent; text: details.sel.length; color: UI.accentText; font.bold: true; font.pixelSize: UI.px(12) }
+                            }
                         }
-                    }
-                }
-                
-                Row {
-                    anchors.right: parent.right
-                    spacing: 10
-                    
-                    Rectangle {
-                        width: 80; height: 36; radius: 6
-                        color: cancelMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.15) : Qt.rgba(1, 1, 1, 0.08)
-                        Text { anchors.centerIn: parent; text: "Cancel"; font.pixelSize: 12; color: "#aaa" }
-                        MouseArea { id: cancelMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: newItemDialog.visible = false }
-                    }
-                    
-                    Rectangle {
-                        width: 80; height: 36; radius: 6
-                        color: createMouse.containsMouse ? Qt.rgba(0.2, 0.6, 0.4, 1) : Qt.rgba(0.2, 0.5, 0.4, 0.9)
-                        Text { anchors.centerIn: parent; text: "Create"; font.pixelSize: 12; color: "#fff"; font.bold: true }
-                        MouseArea { id: createMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: newItemInput.doCreate() }
-                    }
-                }
-            }
-        }
-    }
-    
-    Rectangle {
-        id: deleteDialog
-        anchors.fill: parent
-        color: Qt.rgba(0, 0, 0, 0.6)
-        visible: false
-        z: 2000
-        
-        MouseArea { anchors.fill: parent; onClicked: deleteDialog.visible = false }
-        
-        Rectangle {
-            anchors.centerIn: parent
-            width: 360
-            height: 140
-            radius: 12
-            color: Qt.rgba(0.12, 0.14, 0.18, 0.98)
-            border.width: 1
-            border.color: Qt.rgba(1, 1, 1, 0.15)
-            
-            MouseArea { anchors.fill: parent }
-            
-            Column {
-                anchors.fill: parent
-                anchors.margins: 20
-                spacing: 14
-                
-                Text {
-                    text: "🗑 Delete \"" + (selectedFile ? selectedFile.name : "") + "\"?"
-                    font.pixelSize: 14
-                    color: "#fff"
-                    width: parent.width
-                    elide: Text.ElideMiddle
-                }
-                
-                Text { 
-                    text: currentPath === "/Recycle Bin" ? "This will permanently delete the item." : "Item will be moved to Recycle Bin."
-                    font.pixelSize: 12
-                    color: "#888"
-                }
-                
-                Row {
-                    anchors.right: parent.right
-                    spacing: 10
-                    
-                    Rectangle {
-                        width: 80; height: 36; radius: 6
-                        color: cancelDelMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.15) : Qt.rgba(1, 1, 1, 0.08)
-                        Text { anchors.centerIn: parent; text: "Cancel"; font.pixelSize: 12; color: "#aaa" }
-                        MouseArea { id: cancelDelMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: deleteDialog.visible = false }
-                    }
-                    
-                    Rectangle {
-                        width: 80; height: 36; radius: 6
-                        color: confirmDelMouse.containsMouse ? "#c03030" : "#e04040"
-                        Text { anchors.centerIn: parent; text: "Delete"; font.pixelSize: 12; color: "#fff"; font.bold: true }
-                        MouseArea { 
-                            id: confirmDelMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                if (selectedFile) {
-                                    if (currentPath === "/Recycle Bin") {
-                                        Storage.deleteItem(selectedFile.path)
-                                    } else {
-                                        Storage.moveToTrash(selectedFile.path)
-                                    }
-                                    deleteDialog.visible = false
-                                    loadFolder(currentPath)
+
+                        Text {
+                            width: parent.width
+                            text: details.sel.length > 1 ? details.sel.length + " items selected"
+                                  : (details.sel.length === 0 && ex.path === "/" ? "Home" : (details.info.name || ex.path.split("/").pop()))
+                            color: UI.text
+                            font.pixelSize: UI.px(15)
+                            font.weight: Font.DemiBold
+                            wrapMode: Text.WrapAnywhere
+                        }
+                        Text {
+                            elide: Text.ElideRight
+                            font.weight: UI.textWeight
+                            width: parent.width
+                            text: details.sel.length > 1 ? "Total " + UI.fmtSize(details.totalSize) : (details.info.typeName || "")
+                            color: UI.textDim
+                            font.pixelSize: UI.px(12)
+                        }
+                        Rectangle { width: parent.width; height: 1; color: UI.border; visible: details.sel.length <= 1 }
+
+                        Repeater {
+                            model: {
+                                var r = details.metaRev, i = details.info, rows = []
+                                if (details.sel.length > 1 || !i.path) return rows
+                                if (!i.isDir) rows.push(["Size", UI.fmtSize(i.size)])
+                                if (i.isDir) rows.push(["Contains", i.items + (i.items === 1 ? " item" : " items")])
+                                if (details.dims.w > 0) rows.push(["Dimensions", details.dims.w + " × " + details.dims.h])
+                                else if (details.meta.width > 0) rows.push(["Resolution", details.meta.width + " × " + details.meta.height])
+                                if (details.meta.duration > 0) rows.push(["Length", details.fmtDuration(details.meta.duration)])
+                                if (ex.inTrash && i.originalPath) {
+                                    rows.push(["Original location", Storage.parentOf(i.originalPath)])
+                                    rows.push(["Deleted", UI.fmtDate(i.deletedAt)])
+                                } else {
+                                    rows.push(["Modified", UI.fmtDate(i.modified)])
+                                    if (i.created) rows.push(["Created", UI.fmtDate(i.created)])
+                                    if (i.path !== "/" && i.location) rows.push(["Location", i.location === "/" ? "Home" : i.location])
                                 }
+                                return rows
                             }
+                            delegate: Column {
+                                width: dcol.width
+                                spacing: 1
+                                Text { font.weight: UI.textWeight; text: modelData[0]; color: UI.textFaint; font.pixelSize: UI.px(11) }
+                                Text { font.weight: UI.textWeight; width: parent.width; text: modelData[1]; color: UI.text; font.pixelSize: UI.px(12.5); wrapMode: Text.WrapAnywhere }
+                            }
+                        }
+
+                        Row {
+                            spacing: 6
+                            visible: details.e !== null
+                            GButton { text: ex.inTrash ? "Restore" : "Open"; kind: "primary"; onClicked: if (details.e) ex.inTrash ? ex.restorePaths([details.e.path]) : ex.open(details.e) }
+                            GButton { visible: !ex.inTrash && details.e !== null && !details.e.isDir; text: "Open with…"; onClicked: if (details.e) ex.openWithMenu(details.e, this) }
                         }
                     }
                 }
             }
         }
     }
-    
-    Rectangle {
-        id: renameDialog
-        anchors.fill: parent
-        color: Qt.rgba(0, 0, 0, 0.6)
-        visible: false
-        z: 2000
-        
-        MouseArea { anchors.fill: parent; onClicked: renameDialog.visible = false }
-        
-        Rectangle {
-            anchors.centerIn: parent
-            width: 360
-            height: 160
-            radius: 12
-            color: Qt.rgba(0.12, 0.14, 0.18, 0.98)
-            border.width: 1
-            border.color: Qt.rgba(1, 1, 1, 0.15)
-            
-            MouseArea { anchors.fill: parent }
-            
-            Column {
-                anchors.fill: parent
-                anchors.margins: 20
-                spacing: 16
-                
-                Text { text: "✏ Rename"; font.pixelSize: 16; font.bold: true; color: "#fff" }
-                
-                TextField {
-                    id: renameInput
-                    width: parent.width
-                    height: 40
-                    font.pixelSize: 13
-                    color: "#fff"
-                    background: Rectangle {
-                        color: Qt.rgba(0, 0, 0, 0.3)
-                        radius: 6
-                        border.width: renameInput.activeFocus ? 2 : 1
-                        border.color: renameInput.activeFocus ? Theme.accentColor : Qt.rgba(1, 1, 1, 0.15)
-                    }
-                    
-                    Keys.onReturnPressed: doRename()
-                    Keys.onEscapePressed: renameDialog.visible = false
-                    
-                    function doRename() {
-                        var newName = renameInput.text.trim()
-                        if (newName && selectedFile) {
-                            if (Storage.renameItem(selectedFile.path, newName)) {
-                                renameDialog.visible = false
-                                loadFolder(currentPath)
-                            }
-                        }
-                    }
-                }
-                
-                Row {
-                    anchors.right: parent.right
-                    spacing: 10
-                    
-                    Rectangle {
-                        width: 80; height: 36; radius: 6
-                        color: cancelRenameMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.15) : Qt.rgba(1, 1, 1, 0.08)
-                        Text { anchors.centerIn: parent; text: "Cancel"; font.pixelSize: 12; color: "#aaa" }
-                        MouseArea { id: cancelRenameMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: renameDialog.visible = false }
-                    }
-                    
-                    Rectangle {
-                        width: 80; height: 36; radius: 6
-                        color: confirmRenameMouse.containsMouse ? Qt.rgba(0.3, 0.6, 0.9, 1) : Qt.rgba(0.3, 0.5, 0.8, 0.9)
-                        Text { anchors.centerIn: parent; text: "Rename"; font.pixelSize: 12; color: "#fff"; font.bold: true }
-                        MouseArea { id: confirmRenameMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: renameInput.doRename() }
-                    }
-                }
-            }
-        }
-    }
+
+    ArchiveView { id: archiveView; onExtractRequested: function (p) { ex.extractArchive(p) } }
+    GMenu { id: menu }
+    GDialog { id: dialog }
 }

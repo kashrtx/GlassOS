@@ -1,161 +1,123 @@
 #!/usr/bin/env python3
 """
-GlassOS - Aero-Mojo Operating System Environment
-A stunning desktop environment with liquid glass aesthetics.
+GlassOS - a glassy desktop environment written in Python + Qt Quick.
 
-Author: GlassOS Team
-License: MIT
+    python main.py              # full screen (default)
+    python main.py --windowed   # run in a resizable window
+    python main.py --no-boot    # skip the boot animation
+
+Exit any time with Ctrl+Q (or Start ▸ Power ▸ Shut down).
 """
 
-import sys
+from __future__ import annotations
+
+import argparse
 import os
+import sys
+
+from core import log as _log
 from pathlib import Path
 
-# Fix Windows console encoding for Unicode
-if sys.platform == 'win32':
-    import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
-
-# ===== PERFORMANCE OPTIMIZATIONS =====
-# Enable threaded rendering for smoother UI
-os.environ["QSG_RENDER_LOOP"] = "threaded"
-
-# Use all available CPU threads for rendering
-os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = ""  # Use default platform
-os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
-
-# Enable hardware acceleration
-os.environ["QT_OPENGL"] = "desktop"  # Use desktop OpenGL for best performance
-
-# Multi-threaded image decoding
-os.environ["QT_IMAGEIO_MAXALLOC"] = "512"  # MB limit for image allocations
-
-# Set Qt Quick Controls style to Basic for full customization support
-os.environ["QT_QUICK_CONTROLS_STYLE"] = "Basic"
-
-# WebEngine multi-process mode for better browser performance
-# Enable full hardware acceleration and GPU optimizations
-os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = " ".join([
-    "--enable-features=UseSkiaRenderer,VaapiVideoDecoder",
-    "--enable-gpu-rasterization",
-    "--enable-zero-copy",
-    "--enable-accelerated-2d-canvas",
-    "--enable-accelerated-video-decode",
-    "--enable-native-gpu-memory-buffers",
-    "--disable-gpu-vsync",
-    "--disable-background-timer-throttling",
-    "--disable-renderer-backgrounding",
-    "--disable-backgrounding-occluded-windows",
-    "--enable-smooth-scrolling",
-    "--num-raster-threads=4",
-    "--ignore-gpu-blocklist",
-])
-
-# Add project root to path
-PROJECT_ROOT = Path(__file__).parent
+PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import Qt, QCoreApplication
-from PySide6.QtGui import QFont, QFontDatabase
-from PySide6.QtQml import QQmlApplicationEngine
 
-# Initialize WebEngine BEFORE QApplication is created (required by Chromium)
-try:
-    from PySide6.QtWebEngineQuick import QtWebEngineQuick
-    QtWebEngineQuick.initialize()
-    print("🌐 QtWebEngineQuick initialized successfully")
-except ImportError as e:
-    print(f"⚠️ QtWebEngineQuick not available: {e}")
-    print("   Browser functionality will be limited")
-
-from core.desktop_environment import DesktopEnvironment
-from core.vfs import VirtualFileSystem
-from core.config import Config
+def parse_args(argv):
+    p = argparse.ArgumentParser(prog="GlassOS", description="A glassy desktop environment in Python.")
+    p.add_argument("--windowed", "-w", action="store_true", help="run in a window instead of full screen")
+    p.add_argument("--no-boot", action="store_true", help="skip the boot animation")
+    p.add_argument("--software", action="store_true",
+                   help="use software rendering (for VMs / remote desktops with broken GPU drivers)")
+    # Qt adds its own arguments (e.g. -platform); let them through
+    return p.parse_known_args(argv)[0]
 
 
-def setup_application() -> QApplication:
-    """Initialize and configure the Qt Application."""
-    # Note: AA_EnableHighDpiScaling and AA_UseHighDpiPixmaps are enabled by default in Qt6
-    
-    app = QApplication(sys.argv)
-    
-    # Application metadata
-    app.setApplicationName("GlassOS")
-    app.setApplicationVersion("1.0.0")
-    app.setOrganizationName("GlassOS Team")
-    app.setOrganizationDomain("glassos.app")
-    
-    # Set application-wide font
-    font = QFont("Segoe UI", 10)
-    font.setStyleStrategy(QFont.PreferAntialias)
-    app.setFont(font)
-    
-    return app
+def configure_environment(args):
+    # Only conservative, well-documented knobs. (The first GlassOS build forced
+    # desktop OpenGL and blanked QT_QPA_PLATFORM_PLUGIN_PATH, which stops Qt
+    # from starting on many machines.)
+    os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
+    os.environ.setdefault("QT_QUICK_CONTROLS_CONF", str(PROJECT_ROOT / "qtquickcontrols2.conf"))
+    os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
+    if args.software:
+        os.environ["QT_QUICK_BACKEND"] = "software"
+        os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu")
+    else:
+        # GPU rasterization: without it Chromium rasterizes page tiles on the CPU and
+        # shows black/checkered tiles while scrolling fast. Override with your own
+        # QTWEBENGINE_CHROMIUM_FLAGS if a driver misbehaves (or use --software).
+        os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", " ".join([
+            "--enable-gpu-rasterization",
+            "--enable-zero-copy",
+            "--ignore-gpu-blocklist",
+            "--enable-smooth-scrolling",
+            "--num-raster-threads=4",
+            "--enable-features=CanvasOopRasterization,ParallelDownloading",
+            "--log-level=3",   # Chromium internals log only fatal errors (no harmless DevTools/GPU noise)
+        ]))
+    if sys.platform == "win32":
+        for stream in (sys.stdout, sys.stderr):  # emoji-safe console output
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (AttributeError, ValueError):
+                pass
 
 
-def load_fonts():
-    """Load custom fonts for the glass aesthetic."""
-    fonts_dir = PROJECT_ROOT / "assets" / "fonts"
-    if fonts_dir.exists():
-        for font_file in fonts_dir.glob("*.ttf"):
-            QFontDatabase.addApplicationFont(str(font_file))
-        for font_file in fonts_dir.glob("*.otf"):
-            QFontDatabase.addApplicationFont(str(font_file))
+def main(argv=None) -> int:
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    configure_environment(args)
+    from core import log as glog
+    glog.configure()
+    log = glog.get("main")
 
-
-def initialize_vfs():
-    """Initialize the Virtual File System."""
-    vfs_root = PROJECT_ROOT / "vfs_data"
-    vfs = VirtualFileSystem(vfs_root)
-    vfs.initialize()
-    return vfs
-
-
-def main():
-    """Main entry point for GlassOS."""
-    print("=" * 60)
-    print("  🌟 GlassOS - Aero-Mojo Operating System Environment")
-    print("  Version 1.0.0")
-    print("=" * 60)
-    print()
-    
-    # Set process priority to high for better responsiveness
     try:
-        if sys.platform == 'win32':
-            import ctypes
-            # Set high priority class (above normal)
-            ctypes.windll.kernel32.SetPriorityClass(
-                ctypes.windll.kernel32.GetCurrentProcess(), 
-                0x00008000  # ABOVE_NORMAL_PRIORITY_CLASS
-            )
-            print("⚡ Process priority elevated for smoother performance")
-    except Exception as e:
-        pass  # Non-critical, continue anyway
-    
-    # Initialize application
-    app = setup_application()
-    
-    # Load configuration
-    config = Config()
-    
-    # Load custom fonts
-    load_fonts()
-    
-    # Initialize Virtual File System
-    vfs = initialize_vfs()
-    
-    # Create and show desktop environment
-    desktop = DesktopEnvironment(app, config, vfs)
-    desktop.show()
-    
-    print("✅ GlassOS initialized successfully!")
-    print("   Press Ctrl+Q to exit")
-    print()
-    
-    # Run the application
-    return app.exec()
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QFont, QFontDatabase, QGuiApplication, QIcon
+    except ImportError:
+        print("GlassOS needs PySide6.  Install it with:\n\n    pip install -r requirements.txt\n")
+        return 1
+
+    has_webengine = False
+    try:  # must happen before the QGuiApplication exists
+        from PySide6.QtWebEngineQuick import QtWebEngineQuick
+        QtWebEngineQuick.initialize()
+        has_webengine = True
+    except ImportError:
+        log.info("QtWebEngine not installed - AeroBrowser disabled (pip install PySide6-Addons)")
+
+    QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+    app = QGuiApplication(sys.argv)
+    _log.install_qt_handler()
+    app.setApplicationName("GlassOS")
+    app.setApplicationDisplayName("GlassOS")
+    app.setOrganizationName("GlassOS")
+    app.setApplicationVersion("2.6.8")
+
+    fonts_dir = PROJECT_ROOT / "assets" / "fonts"
+    if fonts_dir.is_dir():
+        for f in list(fonts_dir.glob("*.ttf")) + list(fonts_dir.glob("*.otf")):
+            QFontDatabase.addApplicationFont(str(f))
+    font = QFont()
+    font.setFamilies(["Segoe UI Variable Text", "Segoe UI", "Inter", "SF Pro Text", "Helvetica Neue",
+                      "Ubuntu", "Cantarell", "Noto Sans", "Arial",
+                      "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji"])
+    font.setPixelSize(13)
+    font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
+    app.setFont(font)
+    icon = PROJECT_ROOT / "assets" / "glassos.svg"
+    if icon.exists():
+        app.setWindowIcon(QIcon(str(icon)))
+
+    from core.desktop_environment import DesktopEnvironment
+
+    log.info("GlassOS %s starting%s", app.applicationVersion(), " (windowed)" if args.windowed else "")
+    desktop = DesktopEnvironment(app, has_webengine, windowed=args.windowed, skip_boot=args.no_boot)
+    if not desktop.show():
+        return 1
+    log.info("ready - press Ctrl+Q to shut down")
+    code = app.exec()
+    desktop.shutdown()
+    return code
 
 
 if __name__ == "__main__":

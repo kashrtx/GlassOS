@@ -1,704 +1,305 @@
-// GlassOS Calculator - Advanced Scientific Calculator
-// Modern equation-based input with history, scientific functions, and a beautiful UI
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "../ui"
+import "../components"
 
-Rectangle {
+FocusScope {
     id: calc
-    color: "transparent"
-    
-    // ===== STATE =====
-    property string expression: ""
-    property string result: "0"
-    property var history: []
+    property var hostWindow: null
+    property string initialExpression: ""
+    property bool degrees: Prefs.value("calc.degrees", true)
+    property bool scientific: Prefs.value("calc.scientific", false)
     property bool showHistory: false
-    property bool showScientific: true
-    property bool degreeMode: true  // true = degrees, false = radians
-    property int precision: 10
-    
-    // ===== EXPRESSION EVALUATOR =====
-    function evaluateExpression(expr) {
-        if (!expr || expr.trim() === "") return "0"
-        
-        try {
-            // Preprocess the expression
-            var processed = expr
-            
-            // Replace display symbols with JS operators
-            processed = processed.replace(/×/g, "*")
-            processed = processed.replace(/÷/g, "/")
-            processed = processed.replace(/−/g, "-")
-            processed = processed.replace(/\^/g, "**")
-            
-            // Handle implicit multiplication: 2(3) -> 2*(3), (2)(3) -> (2)*(3), 2sin -> 2*sin
-            processed = processed.replace(/(\d)(\()/g, "$1*(")
-            processed = processed.replace(/(\))(\d)/g, ")*$2")
-            processed = processed.replace(/(\))(\()/g, ")*(")
-            processed = processed.replace(/(\d)(sin|cos|tan|log|ln|sqrt|abs|exp|asin|acos|atan)/g, "$1*$2")
-            
-            // Handle percentage
-            processed = processed.replace(/(\d+\.?\d*)%/g, "($1/100)")
-            
-            // Handle factorial
-            processed = processed.replace(/(\d+)!/g, "factorial($1)")
-            
-            // Math functions - convert to proper JS with degree/radian handling
-            if (degreeMode) {
-                processed = processed.replace(/sin\(([^)]+)\)/g, "Math.sin(($1)*Math.PI/180)")
-                processed = processed.replace(/cos\(([^)]+)\)/g, "Math.cos(($1)*Math.PI/180)")
-                processed = processed.replace(/tan\(([^)]+)\)/g, "Math.tan(($1)*Math.PI/180)")
-                processed = processed.replace(/asin\(([^)]+)\)/g, "(Math.asin($1)*180/Math.PI)")
-                processed = processed.replace(/acos\(([^)]+)\)/g, "(Math.acos($1)*180/Math.PI)")
-                processed = processed.replace(/atan\(([^)]+)\)/g, "(Math.atan($1)*180/Math.PI)")
-            } else {
-                processed = processed.replace(/sin\(/g, "Math.sin(")
-                processed = processed.replace(/cos\(/g, "Math.cos(")
-                processed = processed.replace(/tan\(/g, "Math.tan(")
-                processed = processed.replace(/asin\(/g, "Math.asin(")
-                processed = processed.replace(/acos\(/g, "Math.acos(")
-                processed = processed.replace(/atan\(/g, "Math.atan(")
-            }
-            
-            processed = processed.replace(/sqrt\(/g, "Math.sqrt(")
-            processed = processed.replace(/log\(/g, "Math.log10(")
-            processed = processed.replace(/ln\(/g, "Math.log(")
-            processed = processed.replace(/abs\(/g, "Math.abs(")
-            processed = processed.replace(/exp\(/g, "Math.exp(")
-            processed = processed.replace(/floor\(/g, "Math.floor(")
-            processed = processed.replace(/ceil\(/g, "Math.ceil(")
-            processed = processed.replace(/round\(/g, "Math.round(")
-            
-            // Constants
-            processed = processed.replace(/\bpi\b/gi, "Math.PI")
-            processed = processed.replace(/\be\b/g, "Math.E")
-            processed = processed.replace(/π/g, "Math.PI")
-            
-            // Factorial function
-            var factorialFunc = "var factorial = function(n) { if (n < 0) return NaN; if (n === 0 || n === 1) return 1; var r = 1; for (var i = 2; i <= n; i++) r *= i; return r; }; "
-            
-            // Evaluate
-            var evalResult = eval(factorialFunc + processed)
-            
-            if (isNaN(evalResult)) return "Error"
-            if (!isFinite(evalResult)) return evalResult > 0 ? "∞" : "-∞"
-            
-            // Format result
-            if (Number.isInteger(evalResult)) {
-                return evalResult.toString()
-            } else {
-                // Round to precision, remove trailing zeros
-                var rounded = parseFloat(evalResult.toPrecision(precision))
-                var str = rounded.toString()
-                
-                // Handle very small/large numbers with scientific notation
-                if (Math.abs(evalResult) < 0.0000001 || Math.abs(evalResult) > 9999999999) {
-                    str = evalResult.toExponential(6)
-                }
-                
-                return str
-            }
-        } catch (e) {
-            console.log("Calc error:", e)
-            return "Error"
-        }
+    property var history: UI.arr(Prefs.value("calc.history", [])).filter(function (h) { return h && typeof h.expr === "string" })
+    property string ans: "0"
+    property bool justEvaluated: false
+    readonly property var preview: input.text.trim() === "" ? ({ ok: false, value: "", error: "" })
+                                                           : Calc.evaluate(input.text, degrees, ans)
+
+    Component.onCompleted: {
+        if (initialExpression) { input.text = initialExpression; equals() }
+        input.forceActiveFocus()
     }
-    
-    function calculate() {
-        if (expression.trim() === "") return
-        
-        var res = evaluateExpression(expression)
-        result = res
-        
-        // Add to history
-        if (res !== "Error") {
-            history.unshift({
-                expression: expression,
-                result: res,
-                timestamp: new Date().toLocaleTimeString()
-            })
-            // Keep last 50 entries
-            if (history.length > 50) history.pop()
-            history = history.slice()  // Force update
-        }
+    function handleArgs(props) { if (props.initialExpression) { input.text = props.initialExpression; equals() } }
+
+    function insert(s) {
+        if (justEvaluated && /^[0-9.(πe√a-z]/.test(s)) input.text = ""   // typing a number starts fresh
+        justEvaluated = false
+        var pos = input.cursorPosition
+        input.insert(pos, s)
+        if (s.endsWith("()")) input.cursorPosition = pos + s.length - 1
+        input.forceActiveFocus()
     }
-    
-    function insertText(text) {
-        expression = expression + text
-    }
-    
-    function insertFunction(func) {
-        expression = expression + func + "("
-    }
-    
-    function clear() {
-        expression = ""
-        result = "0"
-    }
-    
-    function clearEntry() {
-        expression = ""
-    }
-    
     function backspace() {
-        if (expression.length > 0) {
-            expression = expression.slice(0, -1)
-        }
+        justEvaluated = false
+        var p = input.cursorPosition
+        if (input.selectedText.length) input.remove(input.selectionStart, input.selectionEnd)
+        else if (p > 0) input.remove(p - 1, p)
+        input.forceActiveFocus()
     }
-    
-    function useResult() {
-        if (result !== "0" && result !== "Error") {
-            expression = result
-        }
+    function clearAll() { input.text = ""; justEvaluated = false; input.forceActiveFocus() }
+    function equals() {
+        var expr = input.text.trim()
+        if (!expr) return
+        var r = Calc.evaluate(expr, degrees, ans)
+        if (!r.ok) { errorShake.restart(); return }
+        var h = history.slice(0, 49)
+        h.unshift({ expr: expr, value: r.value })
+        history = h
+        Prefs.setValue("calc.history", h)
+        ans = r.value
+        input.text = r.value
+        input.cursorPosition = input.length
+        justEvaluated = true
     }
-    
-    function useHistoryItem(item) {
-        expression = item.expression
-        result = item.result
+
+    Keys.onPressed: function (event) {
+        if (event.key === Qt.Key_Escape) { clearAll(); event.accepted = true }
     }
-    
-    // ===== KEYBOARD HANDLING =====
-    Component.onCompleted: expressionInput.forceActiveFocus()
-    
-    // ===== MAIN LAYOUT =====
-    ColumnLayout {
+
+    readonly property var keys: [
+        { t: "C", k: "fn", act: "clear" }, { t: "⌫", k: "fn", act: "back" }, { t: "%", k: "op" }, { t: "÷", k: "op" },
+        { t: "7", k: "num" }, { t: "8", k: "num" }, { t: "9", k: "num" }, { t: "×", k: "op" },
+        { t: "4", k: "num" }, { t: "5", k: "num" }, { t: "6", k: "num" }, { t: "−", k: "op" },
+        { t: "1", k: "num" }, { t: "2", k: "num" }, { t: "3", k: "num" }, { t: "+", k: "op" },
+        { t: "ans", k: "fn" }, { t: "0", k: "num" }, { t: ".", k: "num" }, { t: "=", k: "eq" }
+    ]
+    readonly property var sciKeys: [
+        { t: "sin", ins: "sin(" }, { t: "cos", ins: "cos(" }, { t: "tan", ins: "tan(" }, { t: "(", ins: "(" },
+        { t: "asin", ins: "asin(" }, { t: "acos", ins: "acos(" }, { t: "atan", ins: "atan(" }, { t: ")", ins: ")" },
+        { t: "ln", ins: "ln(" }, { t: "log", ins: "log(" }, { t: "√", ins: "√(" }, { t: "xʸ", ins: "^" },
+        { t: "x²", ins: "^2" }, { t: "1/x", ins: "1/(" }, { t: "n!", ins: "!" }, { t: "mod", ins: " mod " },
+        { t: "π", ins: "π" }, { t: "e", ins: "e" }, { t: "|x|", ins: "abs(" }, { t: "∛", ins: "cbrt(" }
+    ]
+
+    function press(key) {
+        if (key.act === "clear") clearAll()
+        else if (key.act === "back") backspace()
+        else if (key.k === "eq") equals()
+        else insert(key.t)
+    }
+
+    RowLayout {
         anchors.fill: parent
         spacing: 0
-        
-        // ===== HEADER BAR =====
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 36
-            color: Qt.rgba(0.08, 0.09, 0.11, 0.98)
-            
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 12
-                anchors.rightMargin: 12
-                spacing: 8
-                
-                Text {
-                    text: "GlassCalc"
-                    color: "#888"
-                    font.pixelSize: 13
-                    font.weight: Font.Medium
-                }
-                
-                Item { Layout.fillWidth: true }
-                
-                // Mode toggle
-                Rectangle {
-                    width: 60
-                    height: 24
-                    radius: 12
-                    color: degreeMode ? Qt.rgba(0.3, 0.6, 0.9, 0.3) : Qt.rgba(0.5, 0.3, 0.8, 0.3)
-                    
-                    Text {
-                        anchors.centerIn: parent
-                        text: degreeMode ? "DEG" : "RAD"
-                        color: "#fff"
-                        font.pixelSize: 11
-                        font.bold: true
-                    }
-                    
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: degreeMode = !degreeMode
-                        
-                        ToolTip.visible: containsMouse
-                        ToolTip.text: degreeMode ? "Degree mode - Click for Radians" : "Radian mode - Click for Degrees"
-                        ToolTip.delay: 500
-                        hoverEnabled: true
-                    }
-                }
-                
-                // Scientific toggle
-                Rectangle {
-                    width: 28
-                    height: 24
-                    radius: 4
-                    color: showScientific ? Theme.accentColor : Qt.rgba(1,1,1,0.1)
-                    
-                    Text {
-                        anchors.centerIn: parent
-                        text: "f(x)"
-                        color: "#fff"
-                        font.pixelSize: 9
-                    }
-                    
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: showScientific = !showScientific
-                        
-                        ToolTip.visible: containsMouse
-                        ToolTip.text: "Toggle scientific functions"
-                        ToolTip.delay: 500
-                        hoverEnabled: true
-                    }
-                }
-                
-                // History toggle
-                Rectangle {
-                    width: 28
-                    height: 24
-                    radius: 4
-                    color: showHistory ? Theme.accentColor : Qt.rgba(1,1,1,0.1)
-                    
-                    Text {
-                        anchors.centerIn: parent
-                        text: "📜"
-                        font.pixelSize: 12
-                    }
-                    
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: showHistory = !showHistory
-                    }
-                }
-            }
-        }
-        
-        // ===== DISPLAY AREA =====
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 120
-            color: Qt.rgba(0.04, 0.045, 0.06, 0.95)
-            
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: 12
-                spacing: 8
-                
-                // Expression input (editable!)
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 44
-                    radius: 8
-                    color: Qt.rgba(0, 0, 0, 0.4)
-                    border.width: expressionInput.activeFocus ? 2 : 1
-                    border.color: expressionInput.activeFocus ? Theme.accentColor : Qt.rgba(1, 1, 1, 0.15)
-                    
-                    TextInput {
-                        id: expressionInput
-                        anchors.fill: parent
-                        anchors.leftMargin: 14
-                        anchors.rightMargin: 14
-                        verticalAlignment: Text.AlignVCenter
-                        
-                        text: expression
-                        onTextChanged: expression = text
-                        
-                        color: "#ffffff"
-                        font.pixelSize: 22
-                        font.family: "Consolas"
-                        
-                        selectByMouse: true
-                        
-                        // Placeholder
-                        Text {
-                            visible: !parent.text
-                            text: "Type an expression..."
-                            color: "#555"
-                            font: parent.font
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                        
-                        Keys.onReturnPressed: calculate()
-                        Keys.onEnterPressed: calculate()
-                        Keys.onEscapePressed: clear()
-                    }
-                }
-                
-                // Result display
-                Text {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    horizontalAlignment: Text.AlignRight
-                    verticalAlignment: Text.AlignVCenter
-                    
-                    text: "= " + result
-                    color: result === "Error" ? "#ff6b6b" : "#4ade80"
-                    font.pixelSize: result.length > 12 ? 28 : 36
-                    font.family: "Segoe UI"
-                    font.weight: Font.Light
-                    
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: useResult()
-                        
-                        ToolTip.visible: containsMouse && result !== "0"
-                        ToolTip.text: "Click to use this result"
-                        ToolTip.delay: 500
-                        hoverEnabled: true
-                    }
-                }
-            }
-        }
-        
-        // ===== MAIN CONTENT AREA =====
-        RowLayout {
+
+        ColumnLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            spacing: 0
-            
-            // ===== CALCULATOR BUTTONS =====
-            ColumnLayout {
+            Layout.margins: 12
+            spacing: 10
+
+            // ---------------------------------------------------- mode row
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 4
+                GButton { text: calc.degrees ? "DEG" : "RAD"; kind: "flat"; onClicked: { calc.degrees = !calc.degrees; Prefs.setValue("calc.degrees", calc.degrees) } }
+                GButton { text: "Scientific"; kind: calc.scientific ? "primary" : "flat"; onClicked: { calc.scientific = !calc.scientific; Prefs.setValue("calc.scientific", calc.scientific) } }
+                Item { Layout.fillWidth: true }
+                IconButton { iconName: "history"; tip: "History"; active: calc.showHistory; onClicked: calc.showHistory = !calc.showHistory }
+            }
+
+            // ---------------------------------------------------- display
+            Rectangle {
+                id: display
+                Layout.fillWidth: true
+                Layout.preferredHeight: UI.px(140)
+                radius: UI.radius
+                color: Qt.rgba(0, 0, 0, 0.25)
+                border.color: input.activeFocus ? UI.alpha(UI.accent, 0.5) : UI.border
+
+                SequentialAnimation {
+                    id: errorShake
+                    NumberAnimation { target: shakeT; property: "x"; to: -8; duration: 40 }
+                    NumberAnimation { target: shakeT; property: "x"; to: 8; duration: 60 }
+                    NumberAnimation { target: shakeT; property: "x"; to: -5; duration: 50 }
+                    NumberAnimation { target: shakeT; property: "x"; to: 0; duration: 40 }
+                }
+                transform: Translate { id: shakeT }
+
+                Text {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: 12
+                    horizontalAlignment: Text.AlignRight
+                    text: calc.history.length && calc.justEvaluated ? calc.history[0].expr + " =" : " "
+                    color: UI.textDim
+                    font.pixelSize: UI.px(15)
+                    font.weight: Font.Medium
+                    elide: Text.ElideLeft
+                }
+                TextInput {
+                    id: input
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.margins: 12
+                    focus: true
+                    horizontalAlignment: TextInput.AlignRight
+                    color: UI.text
+                    selectionColor: UI.alpha(UI.accent, 0.45)
+                    selectByMouse: true
+                    clip: true
+                    font.pixelSize: UI.px(length > 22 ? 26 : (length > 14 ? 34 : 44))
+                    font.weight: Font.DemiBold
+                    validator: RegularExpressionValidator { regularExpression: /[0-9a-zA-Z.+\-*\/^()!%,\s×÷−πe√]*/ }
+                    onAccepted: calc.equals()
+                    Keys.onEnterPressed: calc.equals()
+                    Keys.onEscapePressed: calc.clearAll()
+                    onTextEdited: calc.justEvaluated = false
+                    Text {
+                        elide: Text.ElideRight
+                        anchors.right: parent.right
+                        visible: input.text === ""
+                        text: "0"
+                        color: UI.textFaint
+                        font: input.font
+                    }
+                }
+                Text {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    anchors.margins: 12
+                    horizontalAlignment: Text.AlignRight
+                    text: calc.justEvaluated ? "" : (calc.preview.ok ? "= " + calc.preview.value : (input.text.trim() ? calc.preview.error : ""))
+                    color: calc.preview.ok ? UI.accent : UI.textFaint
+                    font.pixelSize: UI.px(17)
+                    font.weight: Font.DemiBold
+                    elide: Text.ElideLeft
+                }
+            }
+
+            // ---------------------------------------------------- keypads
+            RowLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                spacing: 0
-                
-                // Scientific functions row (collapsible)
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: showScientific ? 90 : 0
-                    color: Qt.rgba(0.06, 0.07, 0.09, 0.95)
-                    clip: true
-                    visible: showScientific
-                    
-                    Behavior on Layout.preferredHeight { NumberAnimation { duration: 150 } }
-                    
-                    GridLayout {
-                        anchors.fill: parent
-                        anchors.margins: 6
-                        columns: 6
-                        rowSpacing: 4
-                        columnSpacing: 4
-                        
-                        // Row 1: Trig functions
-                        SciFnButton { text: "sin"; onClicked: insertFunction("sin") }
-                        SciFnButton { text: "cos"; onClicked: insertFunction("cos") }
-                        SciFnButton { text: "tan"; onClicked: insertFunction("tan") }
-                        SciFnButton { text: "log"; onClicked: insertFunction("log") }
-                        SciFnButton { text: "ln"; onClicked: insertFunction("ln") }
-                        SciFnButton { text: "√"; onClicked: insertFunction("sqrt") }
-                        
-                        // Row 2: Advanced
-                        SciFnButton { text: "sin⁻¹"; onClicked: insertFunction("asin") }
-                        SciFnButton { text: "cos⁻¹"; onClicked: insertFunction("acos") }
-                        SciFnButton { text: "tan⁻¹"; onClicked: insertFunction("atan") }
-                        SciFnButton { text: "10ˣ"; onClicked: insertText("10**") }
-                        SciFnButton { text: "eˣ"; onClicked: insertFunction("exp") }
-                        SciFnButton { text: "x²"; onClicked: insertText("**2") }
-                        
-                        // Row 3: Constants and extras
-                        SciFnButton { text: "π"; onClicked: insertText("π") }
-                        SciFnButton { text: "e"; onClicked: insertText("e") }
-                        SciFnButton { text: "n!"; onClicked: insertText("!") }
-                        SciFnButton { text: "xʸ"; onClicked: insertText("^") }
-                        SciFnButton { text: "|x|"; onClicked: insertFunction("abs") }
-                        SciFnButton { text: "( )"; onClicked: insertText("()"); highlight: true }
+                spacing: 8
+
+                GridLayout {
+                    visible: calc.scientific
+                    Layout.fillHeight: true
+                    Layout.fillWidth: false
+                    Layout.preferredWidth: (parent.width - 8) * 0.44
+                    Layout.maximumWidth: (parent.width - 8) * 0.44
+                    columns: 4
+                    rowSpacing: 6
+                    columnSpacing: 6
+                    Repeater {
+                        model: calc.sciKeys
+                        AbstractButton {
+                            id: sciKey
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            hoverEnabled: true
+                            focusPolicy: Qt.NoFocus
+                            onClicked: calc.insert(modelData.ins)
+                            background: Rectangle {
+                                radius: UI.radiusSmall
+                                color: sciKey.down ? UI.pressed : (sciKey.hovered ? UI.cardStrong : Qt.rgba(1, 1, 1, 0.03))
+                            }
+                            contentItem: Text {
+                                text: modelData.t
+                                color: UI.text
+                                font.pixelSize: UI.px(15)
+                                font.weight: Font.DemiBold
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
                     }
                 }
-                
-                // Main calculator buttons
-                Rectangle {
+
+                GridLayout {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    color: Qt.rgba(0.08, 0.09, 0.11, 0.95)
-                    
-                    GridLayout {
-                        anchors.fill: parent
-                        anchors.margins: 8
-                        columns: 4
-                        rowSpacing: 6
-                        columnSpacing: 6
-                        
-                        // Row 1: Clear functions
-                        CalcButton { text: "%"; onBtnClicked: insertText("%") }
-                        CalcButton { text: "CE"; onBtnClicked: clearEntry(); isFunction: true }
-                        CalcButton { text: "C"; isAccent: true; onBtnClicked: clear() }
-                        CalcButton { text: "⌫"; onBtnClicked: backspace() }
-                        
-                        // Row 2
-                        CalcButton { text: "7"; isNumber: true; onBtnClicked: insertText("7") }
-                        CalcButton { text: "8"; isNumber: true; onBtnClicked: insertText("8") }
-                        CalcButton { text: "9"; isNumber: true; onBtnClicked: insertText("9") }
-                        CalcButton { text: "÷"; isOp: true; onBtnClicked: insertText("÷") }
-                        
-                        // Row 3
-                        CalcButton { text: "4"; isNumber: true; onBtnClicked: insertText("4") }
-                        CalcButton { text: "5"; isNumber: true; onBtnClicked: insertText("5") }
-                        CalcButton { text: "6"; isNumber: true; onBtnClicked: insertText("6") }
-                        CalcButton { text: "×"; isOp: true; onBtnClicked: insertText("×") }
-                        
-                        // Row 4
-                        CalcButton { text: "1"; isNumber: true; onBtnClicked: insertText("1") }
-                        CalcButton { text: "2"; isNumber: true; onBtnClicked: insertText("2") }
-                        CalcButton { text: "3"; isNumber: true; onBtnClicked: insertText("3") }
-                        CalcButton { text: "−"; isOp: true; onBtnClicked: insertText("-") }
-                        
-                        // Row 5
-                        CalcButton { text: "("; onBtnClicked: insertText("(") }
-                        CalcButton { text: "0"; isNumber: true; onBtnClicked: insertText("0") }
-                        CalcButton { text: ")"; onBtnClicked: insertText(")") }
-                        CalcButton { text: "+"; isOp: true; onBtnClicked: insertText("+") }
-                        
-                        // Row 6
-                        CalcButton { text: "±"; onBtnClicked: insertText("(-") }
-                        CalcButton { text: "."; isNumber: true; onBtnClicked: insertText(".") }
-                        CalcButton { text: "^"; onBtnClicked: insertText("^") }
-                        CalcButton { text: "="; isEquals: true; onBtnClicked: calculate() }
-                    }
-                }
-            }
-            
-            // ===== HISTORY PANEL =====
-            Rectangle {
-                Layout.preferredWidth: showHistory ? 200 : 0
-                Layout.fillHeight: true
-                color: Qt.rgba(0.06, 0.07, 0.09, 0.98)
-                clip: true
-                visible: showHistory
-                
-                Behavior on Layout.preferredWidth { NumberAnimation { duration: 150 } }
-                
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: 8
-                    spacing: 8
-                    
-                    RowLayout {
-                        Layout.fillWidth: true
-                        
-                        Text {
-                            text: "History"
-                            color: "#888"
-                            font.pixelSize: 12
-                            font.bold: true
-                        }
-                        
-                        Item { Layout.fillWidth: true }
-                        
-                        Rectangle {
-                            width: 20
-                            height: 20
-                            radius: 4
-                            color: clearHistMouse.containsMouse ? Qt.rgba(1,0.3,0.3,0.5) : "transparent"
-                            
-                            Text {
-                                anchors.centerIn: parent
-                                text: "🗑"
-                                font.pixelSize: 10
-                            }
-                            
-                            MouseArea {
-                                id: clearHistMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: history = []
-                            }
-                        }
-                    }
-                    
-                    ListView {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        model: history
-                        clip: true
-                        spacing: 4
-                        
-                        delegate: Rectangle {
-                            width: ListView.view.width
-                            height: 50
-                            radius: 6
-                            color: histItemMouse.containsMouse ? Qt.rgba(1,1,1,0.08) : Qt.rgba(1,1,1,0.03)
-                            
-                            Column {
-                                anchors.fill: parent
-                                anchors.margins: 8
-                                spacing: 2
-                                
-                                Text {
-                                    width: parent.width
-                                    text: modelData.expression
-                                    color: "#aaa"
-                                    font.pixelSize: 11
-                                    elide: Text.ElideRight
+                    Layout.preferredWidth: 100
+                    columns: 4
+                    rowSpacing: 6
+                    columnSpacing: 6
+                    Repeater {
+                        model: calc.keys
+                        AbstractButton {
+                            id: key
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            hoverEnabled: true
+                            focusPolicy: Qt.NoFocus
+                            onClicked: calc.press(modelData)
+                            background: Rectangle {
+                                radius: UI.radiusSmall
+                                color: {
+                                    if (modelData.k === "eq") return key.down ? Qt.darker(UI.accent, 1.2) : (key.hovered ? Qt.lighter(UI.accent, 1.1) : UI.accent)
+                                    var base = modelData.k === "num" ? 0.09 : 0.05
+                                    return key.down ? UI.pressed : Qt.rgba(1, 1, 1, key.hovered ? base + 0.06 : base)
                                 }
-                                
-                                Text {
-                                    text: "= " + modelData.result
-                                    color: "#4ade80"
-                                    font.pixelSize: 14
-                                    font.bold: true
-                                }
+                                Behavior on color { ColorAnimation { duration: UI.dur(70) } }
                             }
-                            
-                            MouseArea {
-                                id: histItemMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: useHistoryItem(modelData)
+                            contentItem: Text {
+                                text: modelData.t
+                                color: modelData.k === "eq" ? UI.accentText : (modelData.k === "op" ? UI.accent : UI.text)
+                                font.pixelSize: UI.px(modelData.k === "num" || modelData.k === "eq" ? 25 : 21)
+                                font.weight: modelData.k === "num" ? Font.DemiBold : Font.Bold
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                                scale: key.down ? 0.92 : 1
+                                Behavior on scale { NumberAnimation { duration: UI.dur(70) } }
                             }
-                        }
-                        
-                        // Empty state
-                        Text {
-                            anchors.centerIn: parent
-                            text: "No history yet"
-                            color: "#555"
-                            font.pixelSize: 12
-                            visible: history.length === 0
                         }
                     }
                 }
             }
         }
-        
-        // ===== STATUS BAR =====
+
+        // -------------------------------------------------------- history
         Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 24
-            color: Qt.rgba(0.06, 0.07, 0.09, 0.98)
-            
-            RowLayout {
+            visible: calc.showHistory
+            Layout.fillHeight: true
+            Layout.preferredWidth: UI.px(220)
+            color: Qt.rgba(0, 0, 0, 0.18)
+            ColumnLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 12
-                anchors.rightMargin: 12
-                
-                Text {
-                    text: degreeMode ? "Degrees" : "Radians"
-                    color: "#666"
-                    font.pixelSize: 10
+                anchors.margins: 10
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text { elide: Text.ElideRight; text: "History"; color: UI.text; font.pixelSize: UI.px(14); font.weight: Font.DemiBold; Layout.fillWidth: true }
+                    IconButton { iconName: "trash"; tip: "Clear history"; enabled: calc.history.length > 0; onClicked: { calc.history = []; Prefs.setValue("calc.history", []) } }
                 }
-                
-                Rectangle { width: 1; height: 12; color: "#333" }
-                
-                Text {
-                    text: history.length + " calculations"
-                    color: "#666"
-                    font.pixelSize: 10
-                }
-                
-                Item { Layout.fillWidth: true }
-                
-                Text {
-                    text: "Press Enter to calculate"
-                    color: "#555"
-                    font.pixelSize: 10
-                }
-            }
-        }
-    }
-    
-    // ===== BUTTON COMPONENTS =====
-    
-    component CalcButton: Rectangle {
-        property string text: ""
-        property bool isNumber: false
-        property bool isOp: false
-        property bool isEquals: false
-        property bool isAccent: false
-        property bool isFunction: false
-        signal btnClicked()
-        
-        Layout.fillWidth: true
-        Layout.fillHeight: true
-        Layout.minimumWidth: 50
-        Layout.minimumHeight: 30
-        radius: 8
-        
-        gradient: Gradient {
-            GradientStop { 
-                position: 0.0
-                color: {
-                    if (isEquals) return "#3b82f6"
-                    if (isAccent) return "#dc2626"
-                    if (isOp) return Qt.rgba(0.25, 0.45, 0.75, 0.7)
-                    if (isNumber) return Qt.rgba(0.18, 0.20, 0.24, 1)
-                    return Qt.rgba(0.14, 0.16, 0.20, 1)
-                }
-            }
-            GradientStop { 
-                position: 1.0
-                color: {
-                    if (isEquals) return "#2563eb"
-                    if (isAccent) return "#b91c1c"
-                    if (isOp) return Qt.rgba(0.2, 0.4, 0.7, 0.6)
-                    if (isNumber) return Qt.rgba(0.14, 0.16, 0.20, 1)
-                    return Qt.rgba(0.10, 0.12, 0.16, 1)
+                ListView {
+                    id: histList
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    model: calc.history
+                    spacing: 2
+                    ScrollBar.vertical: GScrollBar {}
+                    delegate: Rectangle {
+                        width: histList.width
+                        height: col.implicitHeight + 12
+                        radius: UI.radiusSmall
+                        color: histMouse.containsMouse ? UI.hover : "transparent"
+                        Column {
+                            id: col
+                            anchors.right: parent.right
+                            anchors.rightMargin: 8
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: parent.width - 16
+                            Text { font.weight: UI.textWeight; width: parent.width; horizontalAlignment: Text.AlignRight; text: modelData.expr; color: UI.textFaint; font.pixelSize: UI.px(11.5); elide: Text.ElideLeft }
+                            Text { elide: Text.ElideRight; font.weight: UI.textWeight; width: parent.width; horizontalAlignment: Text.AlignRight; text: "= " + modelData.value; color: UI.text; font.pixelSize: UI.px(15) }
+                        }
+                        MouseArea {
+                            id: histMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: { input.text = modelData.expr; calc.justEvaluated = false; input.forceActiveFocus() }
+                        }
+                    }
+                    Text { font.weight: UI.textWeight; visible: calc.history.length === 0; anchors.centerIn: parent; text: "No calculations yet"; color: UI.textFaint; font.pixelSize: UI.px(12) }
                 }
             }
         }
-        
-        // Hover overlay
-        Rectangle {
-            anchors.fill: parent
-            radius: parent.radius
-            color: btnMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.1) : "transparent"
-        }
-        
-        // Subtle border
-        Rectangle {
-            anchors.fill: parent
-            radius: parent.radius
-            color: "transparent"
-            border.width: 1
-            border.color: Qt.rgba(1, 1, 1, 0.08)
-        }
-        
-        Text {
-            anchors.centerIn: parent
-            text: parent.text
-            font.pixelSize: isNumber ? 24 : 18
-            font.family: "Segoe UI"
-            font.weight: isEquals ? Font.Bold : Font.Normal
-            color: "#ffffff"
-        }
-        
-        MouseArea {
-            id: btnMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: parent.btnClicked()
-        }
-        
-        scale: btnMouse.pressed ? 0.95 : 1.0
-        Behavior on scale { NumberAnimation { duration: 80; easing.type: Easing.OutQuad } }
-    }
-    
-    component SciFnButton: Rectangle {
-        property string text: ""
-        property bool highlight: false
-        signal clicked()
-        
-        Layout.fillWidth: true
-        Layout.fillHeight: true
-        radius: 6
-        color: highlight ? Qt.rgba(0.4, 0.6, 0.9, 0.4) : Qt.rgba(0.12, 0.14, 0.18, 1)
-        border.width: 1
-        border.color: Qt.rgba(1, 1, 1, 0.08)
-        
-        Rectangle {
-            anchors.fill: parent
-            radius: parent.radius
-            color: sciBtnMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.1) : "transparent"
-        }
-        
-        Text {
-            anchors.centerIn: parent
-            text: parent.text
-            font.pixelSize: 12
-            font.family: "Segoe UI"
-            color: "#cccccc"
-        }
-        
-        MouseArea {
-            id: sciBtnMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: parent.clicked()
-        }
-        
-        scale: sciBtnMouse.pressed ? 0.95 : 1.0
-        Behavior on scale { NumberAnimation { duration: 60 } }
     }
 }

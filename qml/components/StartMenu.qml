@@ -1,552 +1,495 @@
-// GlassOS Start Menu - Premium Modern Design with Working Features
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Layouts
+import "../ui"
+import "../js/Apps.js" as Apps
 
-Rectangle {
-    id: startMenu
-    
-    signal appLaunched(string appName)
-    signal openAppsFolder()
-    
-    radius: 12
-    
-    // Premium dark gradient
-    gradient: Gradient {
-        GradientStop { position: 0.0; color: Qt.rgba(0.14, 0.16, 0.22, 0.98) }
-        GradientStop { position: 1.0; color: Qt.rgba(0.08, 0.10, 0.14, 0.98) }
+Popup {
+    id: start
+    parent: Overlay.overlay
+    width: Math.min(UI.px(640), parent ? parent.width - 20 : 640)
+    height: Math.min(UI.px(640), parent ? parent.height - UI.taskbarHeight - 30 : 640)
+    x: parent ? Math.round((parent.width - width) / 2) : 0
+    // slide-in offset: animating y directly would replace this binding with a fixed number,
+    // so a popup that grows after opening (e.g. notifications) would hang off the screen
+    property real slide: 0
+    y: (parent ? parent.height - UI.taskbarHeight - height - 10 : 0) + slide
+    padding: 0
+    modal: false
+    focus: true
+    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+    property double closedAt: 0      // lets the taskbar button toggle without instantly reopening
+    onClosed: closedAt = Date.now()
+
+    readonly property var wm: UI.wm
+    property string query: ""
+    property var results: []
+    property int selected: 0
+    property var recent: []
+    property bool allApps: false
+
+    // "All apps": alphabetical rows with a letter header before each new initial
+    function alphabetical() {
+        var apps = Apps.list.slice().sort(function (x, y) { return x.name.localeCompare(y.name) })
+        var out = [], last = ""
+        apps.forEach(function (a) {
+            var l = a.name.charAt(0).toUpperCase()
+            if (l !== last) { out.push({ header: true, letter: l }); last = l }
+            out.push({ app: a })
+        })
+        return out
     }
-    
-    border.width: 1
-    border.color: Qt.rgba(0.4, 0.6, 0.9, 0.3)
-    
-    // Outer glow
-    Rectangle {
-        anchors.fill: parent
-        anchors.margins: -2
-        radius: parent.radius + 2
-        color: "transparent"
-        border.width: 2
-        border.color: Qt.rgba(0.3, 0.5, 0.8, 0.15)
-        z: -1
+    function recentWhen(p) {
+        var info = Storage.quickInfo(p)
+        var folder = Storage.parentOf(p)
+        return (info.modified ? UI.fmtDate(info.modified) + "  ·  " : "") + (folder === "/" ? "Home" : folder.split("/").pop())
     }
-    
-    // Glass shine
-    Rectangle {
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.top: parent.top
-        height: 80
-        radius: parent.radius
-        
-        gradient: Gradient {
-            GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0.1) }
-            GradientStop { position: 1.0; color: "transparent" }
+
+    onOpened: {
+        search.text = ""
+        query = ""
+        allApps = false
+        recent = UI.arr(Prefs.value("recent.files", [])).filter(function (p) { return typeof p === "string" && Storage.exists(p) }).slice(0, 6)
+        search.forceActiveFocus()
+    }
+
+    // Search touches the disk, so wait for a short pause in typing.
+    onQueryChanged: searchDebounce.restart()
+    Timer { id: searchDebounce; interval: 120; onTriggered: { start.rebuild(); start.selected = 0 } }
+
+    function rebuild() {
+        var q = query.trim()
+        if (q === "") { results = []; return }
+        var out = []
+        if (Calc.looksLikeMath(q)) {
+            var r = Calc.evaluate(q, true, "0")
+            if (r.ok) out.push({ kind: "calc", icon: "calculator", title: "= " + r.value, subtitle: "Press Enter to copy into Calculator", value: q })
         }
-        
-        Rectangle {
+        Apps.search(q).forEach(function (a) {
+            out.push({ kind: "app", icon: a.icon, title: a.name, subtitle: a.desc, id: a.id })
+        })
+        Storage.search(q, "/", 8).forEach(function (f) {
+            out.push({ kind: "file", icon: f.icon, title: f.name, subtitle: Storage.parentOf(f.path), path: f.path })
+        })
+        if (HasWebEngine) out.push({ kind: "web", icon: "search", title: "Search the web for “" + q + "”", subtitle: "AeroBrowser", value: q })
+        results = out
+    }
+
+    function launch(r) {
+        close()
+        if (r.kind === "app") wm.openApp(r.id, {})
+        else if (r.kind === "file") wm.openPath(r.path)
+        else if (r.kind === "calc") wm.openApp("Calculator", { initialExpression: r.value })
+        else if (r.kind === "web") wm.openApp("AeroBrowser", { initialUrl: "https://duckduckgo.com/?q=" + encodeURIComponent(r.value) })
+    }
+
+    function launchApp(id) { close(); wm.openApp(id, {}) }
+
+    function tileMenu(app, item, mx, my) {
+        tileActions.show(item, mx, my, [
+            { text: "Open", icon: app.icon, action: function () { start.launchApp(app.id) } },
+            { separator: true },
+            { text: wm.isPinned(app.id) ? "Unpin from taskbar" : "Pin to taskbar", icon: "pin", action: function () { wm.togglePin(app.id) } },
+            { text: wm.isOnDesktop(app.id) ? "Remove from desktop" : "Add to desktop", icon: "monitor", action: function () { wm.toggleDesktopApp(app.id) } }
+        ])
+    }
+
+    enter: Transition {
+        ParallelAnimation {
+            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: UI.dur(150) }
+            NumberAnimation { property: "slide"; from: 30; to: 0; duration: UI.dur(220); easing.type: Easing.OutCubic }
+        }
+    }
+    exit: Transition { NumberAnimation { property: "opacity"; to: 0; duration: UI.dur(100) } }
+
+    background: GlassSurface {
+        sceneX: start.x
+        sceneY: start.y
+        radius: UI.radiusLarge
+        borderColor: UI.borderStrong
+    }
+
+    contentItem: Item {
+        // -------------------------------------------------------- search
+        GTextField {
+            id: search
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.margins: 22
+            height: UI.px(40)
+            radiusOverride: 20
+            leading: "search"
+            placeholderText: "Search apps, files, or type a calculation…"
+            onTextChanged: start.query = text
+            Keys.onDownPressed: start.selected = Math.min(start.selected + 1, start.results.length - 1)
+            Keys.onUpPressed: start.selected = Math.max(start.selected - 1, 0)
+            onAccepted: {
+                if (searchDebounce.running) { searchDebounce.stop(); start.rebuild() }   // Enter before the debounce fired
+                if (start.results.length > 0) start.launch(start.results[Math.min(start.selected, start.results.length - 1)])
+            }
+        }
+
+        // -------------------------------------------------------- results
+        ListView {
+            id: resultList
+            visible: start.query.trim() !== ""
+            anchors.top: search.bottom
+            anchors.topMargin: 14
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: footer.top
+            anchors.leftMargin: 14
+            anchors.rightMargin: 14
+            clip: true
+            model: start.results
+            currentIndex: start.selected
+            ScrollBar.vertical: GScrollBar {}
+            delegate: Rectangle {
+                width: resultList.width
+                height: UI.px(52)
+                radius: UI.radius
+                color: index === start.selected ? UI.accentFaint : (rowMouse.containsMouse ? UI.hover : "transparent")
+                border.width: index === start.selected ? 1 : 0
+                border.color: UI.alpha(UI.accent, 0.35)
+                Row {
+                    anchors.left: parent.left
+                    anchors.leftMargin: 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 12
+                    Icon { name: modelData.icon; size: UI.px(22); anchors.verticalCenter: parent.verticalCenter }
+                    Column {
+                        anchors.verticalCenter: parent.verticalCenter
+                        Text {
+                            text: modelData.title
+                            color: UI.text
+                            font.pixelSize: UI.px(modelData.kind === "calc" ? 17 : 13)
+                            font.weight: modelData.kind === "calc" ? Font.DemiBold : Font.Normal
+                            width: resultList.width - 90
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            font.weight: UI.textWeight
+                            text: modelData.subtitle
+                            color: UI.textFaint
+                            font.pixelSize: UI.px(11)
+                            width: resultList.width - 90
+                            elide: Text.ElideMiddle
+                        }
+                    }
+                }
+                Text {
+                    elide: Text.ElideRight
+                    font.weight: UI.textWeight
+                    anchors.right: parent.right
+                    anchors.rightMargin: 14
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: ({ app: "App", file: "File", calc: "Answer", web: "Web" })[modelData.kind]
+                    color: UI.textFaint
+                    font.pixelSize: UI.px(11)
+                }
+                MouseArea {
+                    id: rowMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: start.launch(modelData)
+                }
+            }
+            Text {
+                font.weight: UI.textWeight
+                visible: start.results.length === 0
+                anchors.centerIn: parent
+                text: "No results for “" + start.query + "”"
+                color: UI.textFaint
+                font.pixelSize: UI.px(13)
+            }
+        }
+
+        // -------------------------------------------------------- home (Pinned / All apps + Recommended)
+        Flickable {
+            id: home
+            visible: start.query.trim() === ""
+            anchors.top: search.bottom
+            anchors.topMargin: 18
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: footer.top
+            anchors.leftMargin: 26
+            anchors.rightMargin: 26
+            clip: true
+            contentHeight: homeCol.implicitHeight + 12
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: GScrollBar {}
+
+            Column {
+                id: homeCol
+                width: home.width
+                spacing: 8
+
+                // section header: "Pinned" + All apps  /  "All apps" + Back
+                Item {
+                    width: parent.width
+                    height: UI.px(32)
+                    Text {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: start.allApps ? "All apps" : "Pinned"
+                        color: UI.text; font.pixelSize: UI.px(14); font.weight: Font.DemiBold
+                    }
+                    GButton {
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        kind: "flat"
+                        text: start.allApps ? "Back" : "All apps  ›"
+                        iconName: start.allApps ? "chevron-left" : ""
+                        onClicked: { start.allApps = !start.allApps; home.contentY = 0 }
+                    }
+                }
+
+                // ---- pinned grid: the app icons as designed (no tinted tile behind them)
+                Grid {
+                    id: grid
+                    visible: !start.allApps
+                    columns: 6
+                    width: parent.width
+                    readonly property real cell: width / columns
+                    Repeater {
+                        model: Apps.list
+                        delegate: MouseArea {
+                            id: tile
+                            width: grid.cell
+                            height: UI.px(90)
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            acceptedButtons: Qt.LeftButton | Qt.RightButton
+                            onClicked: function (mouse) {
+                                if (mouse.button === Qt.RightButton) start.tileMenu(modelData, tile, mouse.x, mouse.y)
+                                else start.launchApp(modelData.id)
+                            }
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.margins: 3
+                                radius: UI.radius
+                                color: tile.pressed ? UI.pressed : (tile.containsMouse ? UI.hover : "transparent")
+                                Behavior on color { ColorAnimation { duration: UI.dur(90) } }
+                            }
+                            Column {
+                                anchors.centerIn: parent
+                                spacing: 8
+                                Icon {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    name: modelData.icon
+                                    size: UI.px(42)
+                                    scale: tile.pressed ? 0.92 : (tile.containsMouse ? 1.06 : 1)
+                                    Behavior on scale { NumberAnimation { duration: UI.dur(120); easing.type: Easing.OutBack } }
+                                }
+                                Text {
+                                    font.weight: UI.textWeight
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    text: modelData.name
+                                    color: UI.text
+                                    font.pixelSize: UI.px(11.5)
+                                    width: grid.cell - 8
+                                    horizontalAlignment: Text.AlignHCenter
+                                    elide: Text.ElideRight
+                                }
+                            }
+                            GTip { text: modelData.desc; visible: tile.containsMouse }
+                        }
+                    }
+                }
+
+                // ---- all apps: alphabetical, with letter headers
+                Column {
+                    visible: start.allApps
+                    width: parent.width
+                    spacing: 2
+                    Repeater {
+                        model: start.allApps ? start.alphabetical() : []
+                        delegate: Item {
+                            width: parent.width
+                            height: modelData.header ? UI.px(30) : UI.px(46)
+                            Text {
+                                visible: modelData.header === true
+                                anchors.left: parent.left; anchors.leftMargin: 10
+                                anchors.bottom: parent.bottom; anchors.bottomMargin: 4
+                                text: modelData.letter || ""
+                                color: UI.accent; font.pixelSize: UI.px(12); font.weight: Font.DemiBold
+                            }
+                            MouseArea {
+                                id: appRow
+                                visible: modelData.header !== true
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                onClicked: function (mouse) {
+                                    if (mouse.button === Qt.RightButton) start.tileMenu(modelData.app, appRow, mouse.x, mouse.y)
+                                    else start.launchApp(modelData.app.id)
+                                }
+                                Rectangle { anchors.fill: parent; radius: UI.radius; color: appRow.containsMouse ? UI.hover : "transparent" }
+                                Row {
+                                    anchors.left: parent.left; anchors.leftMargin: 10
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: 12
+                                    Icon { name: modelData.app ? modelData.app.icon : ""; size: UI.px(30); anchors.verticalCenter: parent.verticalCenter }
+                                    Column {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        Text { font.weight: UI.textWeight; text: modelData.app ? modelData.app.name : ""; color: UI.text; font.pixelSize: UI.px(12.5) }
+                                        Text { font.weight: UI.textWeight; text: modelData.app ? modelData.app.desc : ""; color: UI.textFaint; font.pixelSize: UI.px(10.5); width: homeCol.width - UI.px(70); elide: Text.ElideRight }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ---- recommended: recent files (fills the space instead of leaving a void)
+                Item { visible: !start.allApps; width: 1; height: UI.px(10) }
+                Text {
+                    visible: !start.allApps
+                    leftPadding: 4
+                    text: "Recommended"
+                    color: UI.text; font.pixelSize: UI.px(14); font.weight: Font.DemiBold
+                }
+                Grid {
+                    visible: !start.allApps && start.recent.length > 0
+                    columns: 2
+                    width: parent.width
+                    Repeater {
+                        model: start.recent
+                        delegate: MouseArea {
+                            id: rec
+                            width: home.width / 2
+                            height: UI.px(54)
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: { start.close(); start.wm.openPath(modelData) }
+                            Rectangle { anchors.fill: parent; anchors.margins: 2; radius: UI.radius; color: rec.containsMouse ? UI.hover : "transparent" }
+                            Row {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 10
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 12
+                                Icon { name: Storage.iconFor(modelData); size: UI.px(32); anchors.verticalCenter: parent.verticalCenter }
+                                Column {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    Text {
+                                        font.weight: UI.textWeight
+                                        text: modelData.split("/").pop()
+                                        color: UI.text; font.pixelSize: UI.px(12)
+                                        width: home.width / 2 - UI.px(70); elide: Text.ElideMiddle
+                                    }
+                                    Text {
+                                        font.weight: UI.textWeight
+                                        text: start.recentWhen(modelData)
+                                        color: UI.textFaint; font.pixelSize: UI.px(10.5)
+                                        width: home.width / 2 - UI.px(70); elide: Text.ElideRight
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Rectangle {   // nothing recent yet: a friendly placeholder instead of empty space
+                    visible: !start.allApps && start.recent.length === 0
+                    width: parent.width
+                    height: UI.px(86)
+                    radius: UI.radiusLarge
+                    color: Qt.rgba(1, 1, 1, 0.035)
+                    border.color: UI.border
+                    Row {
+                        anchors.centerIn: parent
+                        spacing: 14
+                        Icon { name: "sparkles"; size: UI.px(26); opacity: 0.8; anchors.verticalCenter: parent.verticalCenter }
+                        Column {
+                            anchors.verticalCenter: parent.verticalCenter
+                            Text { font.weight: UI.textWeight; text: "Your recent files will show up here"; color: UI.text; font.pixelSize: UI.px(12.5) }
+                            Text { font.weight: UI.textWeight; text: "Open a document, photo or song to get started"; color: UI.textFaint; font.pixelSize: UI.px(11) }
+                        }
+                    }
+                }
+            }
+        }
+
+        // -------------------------------------------------------- footer (seamless: same glass, soft inset divider)
+        Item {
+            id: footer
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            height: 8
-            color: "transparent"
-        }
-    }
-    
-    // All available apps
-    property var allApps: [
-        { name: "AeroBrowser", icon: "🌐", desc: "Browse the web", color: "#4a9eff", category: "internet" },
-        { name: "GlassPad", icon: "📝", desc: "Text editor", color: "#ff9f43", category: "productivity" },
-        { name: "Calculator", icon: "🧮", desc: "Calculator", color: "#10ac84", category: "utility" },
-        { name: "Weather", icon: "🌤", desc: "Weather forecast", color: "#5f27cd", category: "utility" },
-        { name: "AeroExplorer", icon: "📁", desc: "File manager", color: "#ffd32a", category: "system" },
-        { name: "Settings", icon: "⚙", desc: "System settings", color: "#636e72", category: "system" }
-    ]
-    
-    // Pinned apps (shown in grid)
-    property var pinnedApps: allApps
-    
-    // Search functionality
-    property string searchQuery: ""
-    property var filteredApps: {
-        if (!searchQuery || searchQuery.trim() === "") {
-            return pinnedApps
-        }
-        var query = searchQuery.toLowerCase()
-        return allApps.filter(function(app) {
-            return app.name.toLowerCase().includes(query) ||
-                   app.desc.toLowerCase().includes(query) ||
-                   app.category.toLowerCase().includes(query)
-        })
-    }
-    
-    // Current time for display
-    property string currentTime: ""
-    property string currentDate: ""
-    
-    Timer {
-        interval: 1000
-        running: startMenu.visible
-        repeat: true
-        triggeredOnStart: true
-        onTriggered: {
-            var now = new Date()
-            currentTime = now.toLocaleTimeString(Qt.locale(), "HH:mm")
-            currentDate = now.toLocaleDateString(Qt.locale(), "dddd, MMMM d")
-        }
-    }
-    
-    ColumnLayout {
-        anchors.fill: parent
-        anchors.margins: 16
-        spacing: 12
-        
-        // User profile header with time
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 60
-            radius: 10
-            
-            gradient: Gradient {
-                orientation: Gradient.Horizontal
-                GradientStop { position: 0.0; color: Qt.rgba(0.25, 0.35, 0.55, 0.4) }
-                GradientStop { position: 1.0; color: Qt.rgba(0.15, 0.2, 0.3, 0.4) }
-            }
-            
-            border.width: 1
-            border.color: Qt.rgba(1, 1, 1, 0.08)
-            
-            RowLayout {
-                anchors.fill: parent
-                anchors.margins: 12
-                spacing: 12
-                
-                // Avatar
-                Rectangle {
-                    width: 40
-                    height: 40
-                    radius: 20
-                    
-                    gradient: Gradient {
-                        GradientStop { position: 0.0; color: "#4a9eff" }
-                        GradientStop { position: 1.0; color: "#2a5298" }
-                    }
-                    
-                    Text {
-                        anchors.centerIn: parent
-                        text: "👤"
-                        font.pixelSize: 20
-                    }
-                }
-                
-                Column {
-                    Layout.fillWidth: true
-                    spacing: 2
-                    
-                    Text {
-                        text: "User"
-                        font.pixelSize: 15
-                        font.family: "Segoe UI"
-                        font.weight: Font.DemiBold
-                        color: "#ffffff"
-                    }
-                    
-                    Text {
-                        text: currentDate
-                        font.pixelSize: 11
-                        font.family: "Segoe UI"
-                        color: "#888888"
-                    }
-                }
-                
-                // Time display
-                Column {
-                    spacing: 0
-                    
-                    Text {
-                        anchors.right: parent.right
-                        text: currentTime
-                        font.pixelSize: 22
-                        font.family: "Segoe UI"
-                        font.weight: Font.Light
-                        color: "#ffffff"
-                    }
+            height: UI.px(64)
+            Rectangle {
+                anchors.top: parent.top
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: parent.width - 48
+                height: 1
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0; color: "transparent" }
+                    GradientStop { position: 0.15; color: UI.border }
+                    GradientStop { position: 0.85; color: UI.border }
+                    GradientStop { position: 1; color: "transparent" }
                 }
             }
-        }
-        
-        // Search bar
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 44
-            radius: 10
-            color: Qt.rgba(0, 0, 0, 0.3)
-            border.width: searchInput.activeFocus ? 2 : 1
-            border.color: searchInput.activeFocus ? Qt.rgba(0.4, 0.6, 0.9, 0.7) : Qt.rgba(1, 1, 1, 0.12)
-            
-            Behavior on border.color { ColorAnimation { duration: 150 } }
-            Behavior on border.width { NumberAnimation { duration: 150 } }
-            
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 14
-                anchors.rightMargin: 14
-                spacing: 10
-                
-                Text {
-                    text: "🔍"
-                    font.pixelSize: 16
-                    opacity: 0.7
-                }
-                
-                TextInput {
-                    id: searchInput
-                    Layout.fillWidth: true
-                    font.pixelSize: 14
-                    font.family: "Segoe UI"
-                    color: "#ffffff"
-                    clip: true
-                    
-                    onTextChanged: searchQuery = text
-                    
-                    Keys.onEscapePressed: {
-                        text = ""
-                        focus = false
-                    }
-                    
-                    Keys.onReturnPressed: {
-                        if (filteredApps.length > 0) {
-                            startMenu.appLaunched(filteredApps[0].name)
-                        }
-                    }
-                }
-                
-                // Clear button
-                Rectangle {
-                    visible: searchInput.text.length > 0
-                    width: 20
-                    height: 20
-                    radius: 10
-                    color: clearMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.2) : "transparent"
-                    
-                    Text {
-                        anchors.centerIn: parent
-                        text: "×"
-                        font.pixelSize: 14
-                        color: "#888888"
-                    }
-                    
-                    MouseArea {
-                        id: clearMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            searchInput.text = ""
-                            searchInput.forceActiveFocus()
-                        }
-                    }
-                }
-            }
-            
-            // Placeholder
-            Text {
+
+            MouseArea {
+                id: userArea
                 anchors.left: parent.left
-                anchors.leftMargin: 44
+                anchors.leftMargin: 18
                 anchors.verticalCenter: parent.verticalCenter
-                text: "Type to search apps..."
-                font.pixelSize: 14
-                font.family: "Segoe UI"
-                color: "#555555"
-                visible: !searchInput.text && !searchInput.activeFocus
-            }
-        }
-        
-        // Section label
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.topMargin: 4
-            
-            Text {
-                text: searchQuery ? "SEARCH RESULTS" : "PINNED"
-                font.pixelSize: 11
-                font.family: "Segoe UI"
-                font.weight: Font.DemiBold
-                font.letterSpacing: 1.2
-                color: "#666666"
-            }
-            
-            Item { Layout.fillWidth: true }
-            
-            Text {
-                text: filteredApps.length + " apps"
-                font.pixelSize: 10
-                color: "#555555"
-                visible: searchQuery
-            }
-        }
-        
-        // App grid - responsive
-        Item {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            
-            // No results message
-            Column {
-                anchors.centerIn: parent
-                spacing: 12
-                visible: filteredApps.length === 0
-                
-                Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    text: "🔍"
-                    font.pixelSize: 48
-                    opacity: 0.4
-                }
-                
-                Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    text: "No apps found"
-                    font.pixelSize: 14
-                    color: "#666666"
-                }
-                
-                Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    text: "Try a different search"
-                    font.pixelSize: 12
-                    color: "#555555"
-                }
-            }
-            
-            // App grid
-            GridLayout {
-                anchors.fill: parent
-                visible: filteredApps.length > 0
-                columns: 3
-                rowSpacing: 10
-                columnSpacing: 10
-                
-                Repeater {
-                    model: filteredApps
-                    
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 80
-                        radius: 10
-                        
-                        color: appMouse.containsMouse 
-                            ? Qt.rgba(1, 1, 1, 0.12) 
-                            : Qt.rgba(1, 1, 1, 0.04)
-                        border.width: appMouse.containsMouse ? 1 : 0
-                        border.color: Qt.rgba(1, 1, 1, 0.2)
-                        
-                        Behavior on color { ColorAnimation { duration: 100 } }
-                        Behavior on scale { NumberAnimation { duration: 80 } }
-                        
-                        Column {
-                            anchors.centerIn: parent
-                            spacing: 8
-                            
-                            // Icon with colored background
-                            Rectangle {
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                width: 40
-                                height: 40
-                                radius: 10
-                                
-                                gradient: Gradient {
-                                    GradientStop { position: 0.0; color: modelData.color }
-                                    GradientStop { position: 1.0; color: Qt.darker(modelData.color, 1.3) }
-                                }
-                                
-                                // Glow on hover
-                                Rectangle {
-                                    anchors.fill: parent
-                                    anchors.margins: -3
-                                    radius: parent.radius + 3
-                                    color: "transparent"
-                                    border.width: 2
-                                    border.color: modelData.color
-                                    opacity: appMouse.containsMouse ? 0.4 : 0
-                                    
-                                    Behavior on opacity { NumberAnimation { duration: 150 } }
-                                }
-                                
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: modelData.icon
-                                    font.pixelSize: 20
-                                }
-                            }
-                            
-                            Text {
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                text: modelData.name
-                                font.pixelSize: 12
-                                font.family: "Segoe UI"
-                                font.weight: appMouse.containsMouse ? Font.DemiBold : Font.Normal
-                                color: "#ffffff"
-                            }
-                        }
-                        
-                        MouseArea {
-                            id: appMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: startMenu.appLaunched(modelData.name)
-                        }
-                        
-                        scale: appMouse.pressed ? 0.95 : (appMouse.containsMouse ? 1.02 : 1.0)
-                        
-                        // Tooltip with description
-                        ToolTip {
-                            visible: appMouse.containsMouse
-                            delay: 800
-                            text: modelData.desc
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Divider
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 1
-            color: Qt.rgba(1, 1, 1, 0.1)
-        }
-        
-        // Bottom actions
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 44
-            spacing: 10
-            
-            // Power/Shutdown button - using clear text icon
-            Rectangle {
-                Layout.preferredWidth: 44
-                Layout.preferredHeight: 40
-                radius: 8
-                color: powerMouse.containsMouse ? Qt.rgba(0.9, 0.2, 0.2, 0.5) : Qt.rgba(1, 1, 1, 0.05)
-                
-                Behavior on color { ColorAnimation { duration: 150 } }
-                
-                // Power icon using Canvas for consistent rendering
-                Canvas {
-                    anchors.centerIn: parent
-                    width: 20
-                    height: 20
-                    
-                    onPaint: {
-                        var ctx = getContext("2d")
-                        ctx.clearRect(0, 0, width, height)
-                        
-                        var centerX = width / 2
-                        var centerY = height / 2
-                        var radius = 7
-                        
-                        ctx.strokeStyle = powerMouse.containsMouse ? "#ff6b6b" : "#ffffff"
-                        ctx.lineWidth = 2
-                        ctx.lineCap = "round"
-                        
-                        // Circle (with gap at top)
-                        ctx.beginPath()
-                        ctx.arc(centerX, centerY + 1, radius, Math.PI * 0.3, Math.PI * 2.7, false)
-                        ctx.stroke()
-                        
-                        // Vertical line
-                        ctx.beginPath()
-                        ctx.moveTo(centerX, 2)
-                        ctx.lineTo(centerX, 10)
-                        ctx.stroke()
-                    }
-                }
-                
-                MouseArea {
-                    id: powerMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: Qt.quit()
-                    
-                    ToolTip.visible: containsMouse
-                    ToolTip.text: "Shut down"
-                    ToolTip.delay: 500
-                }
-            }
-            
-            Item { Layout.fillWidth: true }
-            
-            // All apps button - opens apps folder
-            Rectangle {
-                Layout.preferredWidth: 120
-                Layout.preferredHeight: 40
-                radius: 8
-                color: allAppsMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(1, 1, 1, 0.05)
-                border.width: allAppsMouse.containsMouse ? 1 : 0
-                border.color: Qt.rgba(1, 1, 1, 0.15)
-                
-                Behavior on color { ColorAnimation { duration: 150 } }
-                
+                width: userRow.implicitWidth + 20
+                height: UI.px(46)
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: start.launchApp("Settings")
+                Rectangle { anchors.fill: parent; radius: height / 2; color: userArea.containsMouse ? UI.hover : "transparent" }
                 Row {
-                    anchors.centerIn: parent
-                    spacing: 8
-                    
-                    Text {
-                        text: "📂"
-                        font.pixelSize: 14
+                    id: userRow
+                    anchors.left: parent.left
+                    anchors.leftMargin: 8
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 10
+                    Rectangle {
+                        width: UI.px(32); height: width; radius: width / 2
+                        gradient: Gradient {
+                            GradientStop { position: 0; color: Qt.lighter(UI.accent, 1.3) }
+                            GradientStop { position: 1; color: Qt.darker(UI.accent, 1.4) }
+                        }
+                        Text {
+                            anchors.centerIn: parent
+                            text: Prefs.userName.charAt(0).toUpperCase()
+                            color: "white"; font.pixelSize: UI.px(14); font.bold: true
+                        }
                     }
-                    
                     Text {
-                        text: "All apps"
-                        font.pixelSize: 13
-                        font.family: "Segoe UI"
-                        color: "#ffffff"
-                    }
-                    
-                    Text {
-                        text: "→"
-                        font.pixelSize: 14
-                        color: allAppsMouse.containsMouse ? "#ffffff" : "#888888"
-                        
-                        Behavior on color { ColorAnimation { duration: 150 } }
+                        font.weight: UI.textWeight
+                        text: Prefs.userName
+                        color: UI.text; font.pixelSize: UI.px(13)
+                        anchors.verticalCenter: parent.verticalCenter
                     }
                 }
-                
-                MouseArea {
-                    id: allAppsMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        // Close start menu and open explorer to apps folder
-                        startMenu.visible = false
-                        startMenu.appLaunched("AeroExplorer")
-                    }
-                    
-                    ToolTip.visible: containsMouse
-                    ToolTip.text: "Open apps folder"
-                    ToolTip.delay: 500
-                }
+                GTip { text: "Account & settings"; visible: userArea.containsMouse }
+            }
+
+            IconButton {
+                id: powerButton
+                anchors.right: parent.right
+                anchors.rightMargin: 18
+                anchors.verticalCenter: parent.verticalCenter
+                iconName: "power"; size: 40; glyphSize: 17; tip: "Power"
+                onClicked: powerMenu.show(powerButton, 0, -5 * UI.px(32) - 30, [
+                    { text: "Keyboard shortcuts", icon: "keyboard", shortcut: "F1", action: function () { start.close(); start.wm.showShortcuts() } },
+                    { text: "Lock", icon: "lock", shortcut: "Ctrl+Alt+L", action: function () { start.close(); start.wm.lock() } },
+                    { text: "Restart GlassOS", icon: "refresh", action: function () { start.close(); start.wm.requestPower("restart") } },
+                    { separator: true },
+                    { text: "Shut down", icon: "power", shortcut: "Ctrl+Q", danger: true, action: function () { start.close(); start.wm.requestPower("shutdown") } }
+                ])
             }
         }
     }
-    
-    // Appear animation
-    scale: visible ? 1.0 : 0.95
-    opacity: visible ? 1.0 : 0
-    transformOrigin: Item.Bottom
-    
-    Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-    Behavior on opacity { NumberAnimation { duration: 200 } }
-    
-    // Focus search on open
-    onVisibleChanged: {
-        if (visible) {
-            searchInput.text = ""
-            searchQuery = ""
-        }
-    }
+
+    GMenu { id: powerMenu; menuWidth: 220 }
+    GMenu { id: tileActions; menuWidth: 230 }
 }

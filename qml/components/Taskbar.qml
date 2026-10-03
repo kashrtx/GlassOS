@@ -1,982 +1,415 @@
-// GlassOS Taskbar - Fixed & Stable
+// Centered dock: Start + pinned apps + running apps, weather on the left,
+// system tray on the right.
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Layouts
+import "../ui"
+import "../js/Apps.js" as Apps
 
-Rectangle {
-    id: taskbar
-    
-    signal startClicked()
-    signal appClicked(string appName)
-    signal taskbarAppClicked(var window)
-    signal taskbarAppClosed(var window)
-    signal closeAllWindowsOfType(string appTitle)  // Batch termination signal
-    
-    property var runningWindows: []
-    property int volumeLevel: Storage.systemVolume // Bind to system volume
-    
-    // Batch close all windows of a specific app type
-    function closeWindowGroup(windowList) {
-        // Snapshot the list to avoid mutation during iteration
-        var windowsToClose = windowList.slice()
-        
-        // Use a timer to close windows sequentially to avoid race conditions
-        var closeNext = function() {
-            if (windowsToClose.length > 0) {
-                var win = windowsToClose.shift()
-                if (win && typeof win.destroy === 'function') {
-                    taskbar.taskbarAppClosed(win)
-                }
+Item {
+    id: bar
+    height: UI.taskbarHeight
+
+    property bool startOpen: false
+    signal startRequested()
+    signal quickSettingsRequested()
+    signal calendarRequested()
+
+    readonly property var wm: UI.wm
+    // only the current workspace's windows appear in the dock
+    readonly property var windows: wm ? wm.windows.filter(function (w) { return w.workspace === wm.workspace }) : []
+    property var pinned: loadPinned()
+    readonly property var entries: buildEntries(pinned, windows)
+
+    function loadPinned() {
+        var p = Prefs.value("taskbar.pinned", Apps.defaultPinned)
+        return UI.isList(p) ? UI.arr(p).filter(function (id) { return typeof id === "string" && Apps.get(id) !== null }) : Apps.defaultPinned
+    }
+    Connections {
+        target: Prefs
+        function onValueChanged(key) { if (key === "taskbar.pinned") bar.pinned = bar.loadPinned() }
+    }
+
+    function buildEntries(pins, wins) {
+        var out = [], index = {}
+        function entry(id) {
+            if (index[id] === undefined) {
+                var info = Apps.get(id)
+                if (!info) return null
+                index[id] = out.length
+                out.push({ id: id, info: info, windows: [], pinned: pins.indexOf(id) >= 0 })
             }
+            return out[index[id]]
         }
-        
-        // Close all at once via signal emissions
-        for (var i = 0; i < windowsToClose.length; i++) {
-            taskbar.taskbarAppClosed(windowsToClose[i])
+        for (var i = 0; i < pins.length; i++) entry(pins[i])
+        for (var j = 0; j < wins.length; j++) {
+            var e = entry(wins[j].appId)
+            if (e) e.windows.push(wins[j])
         }
+        return out
     }
-    
-    // Group windows logic
-    function getGroupedApps() {
-        var groups = {}
-        for (var i = 0; i < runningWindows.length; i++) {
-            var win = runningWindows[i]
-            if (!win) continue
-            var title = win.windowTitle || "Window"
-            var key = win.windowIcon || title
-            if (!groups[key]) {
-                groups[key] = {
-                    title: title,
-                    icon: win.windowIcon || "🪟",
-                    windows: []
-                }
-            }
-            groups[key].windows.push(win)
+
+    function togglePin(id) { wm.togglePin(id) }
+
+    function activateEntry(entry, button) {
+        var ws = entry.windows
+        if (ws.length === 0) { wm.openApp(entry.id, {}); return }
+        if (ws.length === 1) {
+            var w = ws[0]
+            if (w === wm.activeWindow && !w.minimized) wm.minimizeWindow(w)
+            else wm.focusWindow(w)
+            return
         }
-        var result = []
-        for (var k in groups) {
-            result.push(groups[k])
-        }
-        return result
+        var items = ws.map(function (w) {
+            return { text: w.title, icon: w.icon, action: function () { wm.focusWindow(w) } }
+        })
+        items.push({ separator: true })
+        items.push({ text: "Close all " + ws.length + " windows", icon: "close", danger: true,
+                     action: function () { ws.slice().forEach(function (w) { wm.closeWindow(w) }) } })
+        menu.menuWidth = 280
+        var h = items.length * UI.px(32) + 10
+        menu.show(button, 0, -h - 10, items)
     }
-    
-    property var groupedApps: getGroupedApps()
-    
-    onRunningWindowsChanged: groupedApps = getGroupedApps()
-    
-    // Premium dark glass background
-    // Premium glass background
-    color: Qt.rgba(0.08, 0.10, 0.15, 0.85) // Translucent dark glass
-    border.width: 1
-    border.color: Qt.rgba(1, 1, 1, 0.1)
-    
-    /* Removed old gradient
-    gradient: Gradient {
-        GradientStop { position: 0.0; color: Qt.rgba(0.12, 0.14, 0.20, 0.95) }
-        GradientStop { position: 0.3; color: Qt.rgba(0.08, 0.10, 0.15, 0.95) }
-        GradientStop { position: 1.0; color: Qt.rgba(0.05, 0.06, 0.10, 0.95) }
-    } */
-    
-    // Top highlight
-    Rectangle {
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.top: parent.top
-        height: 1
-        gradient: Gradient {
-            orientation: Gradient.Horizontal
-            GradientStop { position: 0.0; color: Qt.rgba(0.4, 0.6, 0.9, 0.1) }
-            GradientStop { position: 0.5; color: Qt.rgba(0.5, 0.7, 1.0, 0.7) }
-            GradientStop { position: 1.0; color: Qt.rgba(0.4, 0.6, 0.9, 0.1) }
+
+    function entryMenu(entry, button) {
+        var items = [
+            { text: entry.info.name, icon: entry.info.icon, enabled: false },
+            { separator: true },
+            { text: "New window", icon: "plus", action: function () { wm.openApp(entry.id, {}) } },
+            { text: entry.pinned ? "Unpin from taskbar" : "Pin to taskbar", icon: "pin",
+              action: function () { bar.togglePin(entry.id) } }
+        ]
+        if (entry.windows.length > 0) {
+            items.push({ separator: true })
+            items.push({ text: entry.windows.length > 1 ? "Close all windows" : "Close window", icon: "close", danger: true,
+                         action: function () { entry.windows.slice().forEach(function (w) { wm.closeWindow(w) }) } })
         }
+        menu.menuWidth = 236
+        var h = (items.length - 2) * UI.px(32) + 2 * 9 + 10
+        menu.show(button, 0, -h - 10, items)
     }
-    
-    RowLayout {
+
+    GMenu { id: menu }
+
+    MouseArea {   // right-click the empty taskbar
         anchors.fill: parent
-        anchors.leftMargin: 6
-        anchors.rightMargin: 6
-        spacing: 0
-        
-        // Start button
-        Rectangle {
-            Layout.preferredWidth: 48
-            Layout.preferredHeight: 40
-            Layout.alignment: Qt.AlignVCenter
-            radius: 6
-            color: "transparent" // handled by inner/gradient
-            
-            gradient: Gradient {
-                GradientStop { position: 0.0; color: startMouse.containsMouse ? Qt.rgba(0.3, 0.5, 0.8, 0.6) : Qt.rgba(0.2, 0.4, 0.7, 0.4) }
-                GradientStop { position: 1.0; color: startMouse.containsMouse ? Qt.rgba(0.2, 0.4, 0.7, 0.6) : Qt.rgba(0.15, 0.3, 0.6, 0.4) }
-            }
-            border.width: 1
-            border.color: startMouse.containsMouse ? Qt.rgba(0.5, 0.7, 1.0, 0.6) : Qt.rgba(0.4, 0.6, 0.9, 0.3)
-            
-            Text {
-                anchors.centerIn: parent
-                text: "⊞"
-                font.pixelSize: 22
-                font.bold: true
-                color: "#ffffff"
-            }
-            
-            MouseArea {
-                id: startMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                onClicked: taskbar.startClicked()
-            }
+        acceptedButtons: Qt.RightButton
+        onClicked: function (mouse) {
+            menu.menuWidth = 236
+            menu.show(bar, mouse.x, -6 * UI.px(32) - 30, [
+                { text: "Task Manager", icon: "activity", action: function () { bar.wm.openApp("TaskManager", {}) } },
+                { text: "Clipboard history", icon: "paste", shortcut: "Ctrl+Alt+V", action: function () { bar.wm.openClipboard() } },
+                { text: "Show desktop", icon: "monitor", shortcut: "Ctrl+Alt+D", action: function () { bar.wm.showDesktop() } },
+                { text: "Refresh", icon: "refresh", action: function () { Storage.notifyChanged("/Desktop") } },
+                { separator: true },
+                { text: "Taskbar & personalization", icon: "settings", action: function () { bar.wm.openApp("Settings", { initialPage: "personalize" }) } },
+                { text: "Keyboard shortcuts", icon: "keyboard", shortcut: "F1", action: function () { bar.wm.showShortcuts() } }
+            ])
         }
-        
-        // Separator
-        Rectangle {
-            Layout.preferredWidth: 1; Layout.preferredHeight: 32; Layout.margins: 8
-            color: Qt.rgba(1, 1, 1, 0.15)
-        }
-        
-        // Pinned apps
+    }
+
+    GlassSurface {
+        anchors.fill: parent
+        radius: 0
+        sceneX: bar.x
+        sceneY: bar.y
+        tint: Qt.rgba(0.05, 0.065, 0.1, 0.58)
+        showBorder: false
+    }
+    Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: UI.border }
+
+    // ---------------------------------------------------------------- weather
+    MouseArea {
+        id: weatherChip
+        anchors.left: parent.left
+        anchors.leftMargin: 10
+        anchors.verticalCenter: parent.verticalCenter
+        width: weatherRow.implicitWidth + 20
+        height: parent.height - 12
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        visible: WeatherService.hasData && bar.width > 820
+        onClicked: wm.openApp("Weather", {})
+        Rectangle { anchors.fill: parent; radius: UI.radius; color: weatherChip.containsMouse ? UI.hover : "transparent" }
         Row {
-            Layout.preferredHeight: parent.height
-            spacing: 4
-            Repeater {
-                model: [
-                    { name: "AeroExplorer", icon: "📁", tooltip: "Explorer" },
-                    { name: "AeroBrowser", icon: "🌐", tooltip: "Browser" },
-                    { name: "GlassPad", icon: "📝", tooltip: "GlassPad" }
-                ]
-                Rectangle {
-                    width: 42; height: 38
-                    anchors.verticalCenter: parent.verticalCenter
-                    radius: 5
-                    color: pMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.15) : "transparent"
-                    Text { anchors.centerIn: parent; text: modelData.icon; font.pixelSize: 20 }
-                    MouseArea {
-                        id: pMouse; anchors.fill: parent; hoverEnabled: true
-                        onClicked: taskbar.appClicked(modelData.name)
+            id: weatherRow
+            anchors.centerIn: parent
+            spacing: 8
+            Icon { name: WeatherService.current.icon || ""; size: UI.px(26); anchors.verticalCenter: parent.verticalCenter }
+            Column {
+                anchors.verticalCenter: parent.verticalCenter
+                Text {
+                    text: {
+                        var t = WeatherService.current.temp
+                        if (t === undefined) return ""
+                        return UI.temp(t)
                     }
-                    ToolTip.visible: pMouse.containsMouse
-                    ToolTip.text: modelData.tooltip
-                    ToolTip.delay: 500
+                    color: UI.text; font.pixelSize: UI.px(12); font.weight: Font.DemiBold
+                }
+                Text { font.weight: UI.textWeight; text: WeatherService.current.condition || ""; color: UI.textDim; font.pixelSize: UI.px(11) }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ dock (center)
+    Row {
+        id: dock
+        anchors.centerIn: parent
+        spacing: 4
+
+        // Start
+        AbstractButton {
+            id: startButton
+            width: UI.px(44); height: UI.px(44)
+            hoverEnabled: true
+            onClicked: bar.startRequested()
+            background: Rectangle {
+                radius: UI.radius
+                color: startButton.down || bar.startOpen ? UI.pressed : (startButton.hovered ? UI.hover : "transparent")
+            }
+            contentItem: Item {
+                Grid {
+                    anchors.centerIn: parent
+                    columns: 2; spacing: 2.5
+                    scale: startButton.down ? 0.86 : 1
+                    Behavior on scale { NumberAnimation { duration: UI.dur(90) } }
+                    Repeater {
+                        model: 4
+                        Rectangle {
+                            width: UI.px(9); height: UI.px(9); radius: 2.5
+                            gradient: Gradient {
+                                GradientStop { position: 0; color: Qt.lighter(UI.accent, 1.35) }
+                                GradientStop { position: 1; color: UI.accent }
+                            }
+                            opacity: index === 3 ? 0.75 : 1
+                        }
+                    }
                 }
             }
+            GTip { text: "Start  (Ctrl+Space)"; visible: startButton.hovered }
         }
-        
-        // Separator
-        Rectangle {
-            Layout.preferredWidth: 1; Layout.preferredHeight: 32; Layout.margins: 8
-            color: Qt.rgba(1, 1, 1, 0.15)
-        }
-        
-        // Running apps list (ListView for proper overflow handling)
-        ListView {
-            id: runningList
-            Layout.fillWidth: true
-            Layout.preferredHeight: parent.height
-            orientation: ListView.Horizontal
-            spacing: 4
-            clip: true
-            model: groupedApps
-            
-            delegate: Rectangle {
-                id: appGroupItem
-                property bool hasMultiple: modelData.windows.length > 1
-                // Fixed width for consistency - no shrinking
-                width: 160 
-                height: 40
-                anchors.verticalCenter: parent.verticalCenter
-                radius: 5
-                
-                property bool isActive: {
-                    for(var i=0; i<modelData.windows.length; i++) {
-                        if(modelData.windows[i].visible && !modelData.windows[i].isMinimized) return true
-                    }
+
+        Repeater {
+            model: bar.entries
+            delegate: AbstractButton {
+                id: appButton
+                width: UI.px(44); height: UI.px(44)
+                hoverEnabled: true
+                readonly property var entry: modelData
+                readonly property bool running: entry.windows.length > 0
+                readonly property bool focused: {
+                    for (var i = 0; i < entry.windows.length; i++)
+                        if (entry.windows[i].active && !entry.windows[i].minimized) return true
                     return false
                 }
-                
-                property bool hovered: groupMouse.containsMouse || previewPopup.opened
-                
-                gradient: Gradient {
-                    GradientStop { position: 0.0; color: isActive ? Qt.rgba(0.3, 0.5, 0.8, 0.5) : (hovered ? Qt.rgba(1,1,1,0.15) : Qt.rgba(1,1,1,0.05)) }
-                    GradientStop { position: 1.0; color: isActive ? Qt.rgba(0.2, 0.4, 0.7, 0.4) : (hovered ? Qt.rgba(1,1,1,0.1) : "transparent") }
+
+                background: Rectangle {
+                    radius: UI.radius
+                    // running apps get a visible tile; the focused one is highlighted in the accent color
+                    color: appButton.down ? UI.pressed
+                         : appButton.focused ? UI.accentSoft
+                         : appButton.running ? (appButton.hovered ? UI.cardStrong : UI.card)
+                         : (appButton.hovered ? UI.hover : "transparent")
+                    border.width: appButton.running ? 1 : 0
+                    border.color: appButton.focused ? UI.alpha(UI.accent, 0.55) : UI.border
                 }
-                
-                border.width: isActive ? 1 : 0
-                border.color: Qt.rgba(0.4, 0.6, 0.9, 0.5)
-                
-                // Bottom indicator
-                Rectangle {
-                    anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
-                    anchors.margins: 4; height: 2; radius: 1
-                    color: isActive ? "#4a9eff" : (modelData.windows.length > 0 ? Qt.rgba(1,1,1,0.3) : "transparent")
-                }
-                
-                Row {
-                    anchors.fill: parent; anchors.leftMargin: 8; anchors.rightMargin: 8; spacing: 8
-                    Text { anchors.verticalCenter: parent.verticalCenter; text: modelData.icon; font.pixelSize: 18 }
-                    Text { 
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: parent.width - 40
-                        text: modelData.title
-                        color: "#ffffff"
-                        font.pixelSize: 12
-                        elide: Text.ElideRight
-                    }
-                }
-                
-                // Badge
-                Rectangle {
-                    visible: hasMultiple
-                    anchors.top: parent.top; anchors.right: parent.right; anchors.margins: 2
-                    width: 16; height: 14; radius: 7; color: "#4a9eff"
-                    Text { anchors.centerIn: parent; text: modelData.windows.length; color: "#fff"; font.pixelSize: 9; font.bold: true }
-                }
-                
-                MouseArea {
-                    id: groupMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    acceptedButtons: Qt.LeftButton | Qt.RightButton
-                    
-                    onClicked: function(mouse) {
-                        if (mouse.button === Qt.RightButton) {
-                            taskbarContextMenu.open()
-                        } else {
-                            if (!hasMultiple) {
-                                var win = modelData.windows[0]
-                                if(win.visible && !win.isMinimized) win.minimizeWindow()
-                                else { win.visible=true; win.z=100; if(win.isMinimized) win.restoreFromMinimize(); taskbar.taskbarAppClicked(win) }
-                            } else {
-                                if (previewPopup.opened) previewPopup.close()
-                                else previewPopup.open()
-                            }
-                        }
-                    }
-                }
-                
-                Popup {
-                    id: taskbarContextMenu
-                    y: -height - 10
-                    x: 0
-                    width: 180
-                    height: 40
-                    padding: 0
-                    modal: true
-                    focus: true
-                    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-                    
-                    background: Rectangle {
-                        color: Qt.rgba(0.1, 0.12, 0.18, 0.95)
-                        radius: 6
-                        border.width: 1
-                        border.color: "#666"
-                    }
-                    
-                    Rectangle {
-                        width: parent.width - 4
-                        height: 32
+                contentItem: Item {
+                    Icon {
                         anchors.centerIn: parent
-                        color: "transparent"
-                        
-                        Row {
-                            anchors.fill: parent
-                            anchors.leftMargin: 10
-                            spacing: 12
-                            Text { anchors.verticalCenter: parent.verticalCenter; text: "❌"; font.pixelSize: 12 }
-                            Text { anchors.verticalCenter: parent.verticalCenter; text: "Close All Windows"; color: "#fff"; font.pixelSize: 11 }
-                        }
-                        
-                        Rectangle {
-                            anchors.fill: parent
-                            color: closeAllMouse.containsMouse ? Qt.rgba(1,1,1,0.1) : "transparent"
-                            radius: 4
-                        }
-                        
-                        MouseArea {
-                            id: closeAllMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                // Use batch close to terminate all windows of this group
-                                taskbar.closeWindowGroup(modelData.windows)
-                                taskbarContextMenu.close()
-                            }
-                        }
+                        anchors.verticalCenterOffset: -1
+                        name: appButton.entry.info.icon
+                        size: UI.px(28)
+                        scale: appButton.down ? 0.84 : 1
+                        Behavior on scale { NumberAnimation { duration: UI.dur(110); easing.type: Easing.OutBack } }
                     }
                 }
-                
-                // Logic to show preview
-                Timer {
-                    id: showTimer
-                    interval: 400
-                    running: groupMouse.containsMouse && !previewPopup.opened
-                    onTriggered: previewPopup.open()
+                Rectangle {   // running indicator
+                    z: 5
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: 1
+                    height: 3; radius: 1.5
+                    width: appButton.focused ? UI.px(20) : UI.px(8)
+                    visible: appButton.running
+                    color: appButton.focused ? UI.accent : Qt.rgba(1, 1, 1, 0.75)
+                    Behavior on width { NumberAnimation { duration: UI.dur(160); easing.type: Easing.OutCubic } }
                 }
-                
-                Popup {
-                    id: previewPopup
-                    property bool useListMode: modelData.windows.length > 3
-                    
-                    y: -height - 10
-                    x: (parent.width - width) / 2
-                    
-                    width: useListMode ? 220 : Math.min(600, modelData.windows.length * 190)
-                    height: useListMode ? Math.min(400, modelData.windows.length * 36 + 16) : 150
-                    
-                    padding: 0
-                    modal: false
-                    focus: true
-                    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-                    
-                    background: Rectangle {
-                        color: Qt.rgba(0.1, 0.12, 0.18, 0.95)
-                        radius: 8
-                        border.width: 1
-                        border.color: "#4a9eff"
+                Rectangle {   // window count badge
+                    // z: a Control stacks its contentItem (the icon) above plain children,
+                    // so without this the badge was hidden behind the icon
+                    z: 5
+                    visible: appButton.entry.windows.length > 1
+                    anchors.right: parent.right; anchors.top: parent.top
+                    anchors.rightMargin: 1; anchors.topMargin: 1
+                    width: UI.px(16); height: width; radius: width / 2
+                    color: UI.accent
+                    border.width: 2
+                    border.color: Qt.rgba(0.06, 0.08, 0.11, 0.95)   // dark ring separates it from the icon
+                    Text {
+                        anchors.centerIn: parent
+                        text: appButton.entry.windows.length
+                        color: UI.accentText; font.pixelSize: UI.px(9); font.bold: true
                     }
-                    
-                    contentItem: Rectangle {
-                        color: "transparent"
-                        
-                        MouseArea {
-                            id: popupMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                        }
-                        
-                        // Auto-hide logic
-                        Timer {
-                            interval: 200
-                            running: true
-                            repeat: true
-                            onTriggered: {
-                                if (!groupMouse.containsMouse && !popupMouse.containsMouse && !previewPopup.opened) {
-                                    previewPopup.close()
-                                }
-                            }
-                        }
-                        
-                        // Content
-                        ListView {
-                            anchors.fill: parent
-                            anchors.margins: 8
-                            orientation: previewPopup.useListMode ? ListView.Vertical : ListView.Horizontal
-                            spacing: previewPopup.useListMode ? 4 : 8
-                            model: modelData.windows
-                            clip: true
-                            
-                            delegate: Rectangle {
-                                width: previewPopup.useListMode ? parent.width : 180
-                                height: previewPopup.useListMode ? 32 : parent.height
-                                color: Qt.rgba(0.2, 0.22, 0.28, 0.6)
-                                border.width: 1
-                                border.color: Qt.rgba(1, 1, 1, 0.1)
-                                radius: 4
-                                
-                                // Main click handler (Background)
-                                MouseArea {
-                                    anchors.fill: parent
-                                    onClicked: {
-                                        modelData.visible = true; modelData.z = 100
-                                        if(modelData.isMinimized) modelData.restoreFromMinimize()
-                                        taskbar.taskbarAppClicked(modelData)
-                                        previewPopup.close()
-                                    }
-                                }
-                                
-                                // List Mode Layout
-                                Row {
-                                    visible: previewPopup.useListMode
-                                    anchors.fill: parent
-                                    anchors.leftMargin: 8; anchors.rightMargin: 8
-                                    spacing: 8
-                                    
-                                    Text { 
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: modelData.windowIcon; font.pixelSize: 14 
-                                    }
-                                    
-                                    Text { 
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        width: parent.width - 40
-                                        text: modelData.windowTitle
-                                        color: "#fff"
-                                        font.pixelSize: 11
-                                        elide: Text.ElideRight 
-                                    }
-                                    
-                                    Rectangle {
-                                        width: 12; height: 12
-                                        color: closeListMouse.containsMouse ? "#cc3333" : "transparent"
-                                        radius: 3
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        z: 5
-                                        
-                                        Text { anchors.centerIn: parent; text: "✕"; color: "#fff"; font.pixelSize: 10 }
-                                        MouseArea {
-                                            id: closeListMouse
-                                            anchors.fill: parent
-                                            hoverEnabled: true
-                                            z: 10
-                                            onClicked: {
-                                                console.log("Taskbar: Closing app from list preview")
-                                                taskbar.taskbarAppClosed(modelData)
-                                            }
-                                        }
-                                    }
-                                }
-                                
-                                // Grid Mode Layout
-                                Item {
-                                    visible: !previewPopup.useListMode
-                                    anchors.fill: parent
-                                    anchors.margins: 4
-                                    
-                                    // Header
-                                    Item {
-                                        id: header
-                                        width: parent.width
-                                        height: 20
-                                        
-                                        Row {
-                                            anchors.left: parent.left
-                                            anchors.right: closeBtn.left
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            spacing: 6
-                                            
-                                            Text { text: modelData.windowIcon; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
-                                            Text { 
-                                                width: parent.width - 25
-                                                text: modelData.windowTitle
-                                                color: "#fff"
-                                                font.pixelSize: 11
-                                                elide: Text.ElideRight
-                                                anchors.verticalCenter: parent.verticalCenter
-                                            }
-                                        }
-                                        
-                                        Rectangle {
-                                            id: closeBtn
-                                            anchors.right: parent.right
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            width: 18; height: 18
-                                            radius: 3
-                                            color: closeMouse.containsMouse ? "#cc3333" : "transparent"
-                                            
-                                            Text { anchors.centerIn: parent; text: "✕"; color: "#fff"; font.pixelSize: 10 }
-                                            
-                                            MouseArea {
-                                                id: closeMouse
-                                                anchors.fill: parent
-                                                hoverEnabled: true
-                                                z: 10
-                                                onClicked: {
-                                                    console.log("Taskbar: Closing app from grid preview")
-                                                    taskbar.taskbarAppClosed(modelData)
-                                                }
-                                            }
-                                        }
-                                    }
-                                    
-                                    // Live preview if not minimized
-                                    ShaderEffectSource {
-                                        anchors.top: header.bottom
-                                        anchors.left: parent.left
-                                        anchors.right: parent.right
-                                        anchors.bottom: parent.bottom
-                                        anchors.topMargin: 4
-                                        sourceItem: modelData.visible && !modelData.isMinimized ? modelData : null
-                                        live: true
-                                        visible: sourceItem !== null
-                                        
-                                        Rectangle {
-                                            anchors.fill: parent
-                                            color: Qt.rgba(0,0,0,0.5)
-                                            visible: modelData.isMinimized
-                                            Text { anchors.centerIn: parent; text: "Minimized"; color: "#888"; font.pixelSize: 10 }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    acceptedButtons: Qt.RightButton | Qt.MiddleButton
+                    onClicked: function (mouse) {
+                        if (mouse.button === Qt.MiddleButton) bar.wm.openApp(appButton.entry.id, {})
+                        else bar.entryMenu(appButton.entry, appButton)
                     }
+                }
+                onClicked: bar.activateEntry(entry, appButton)
+                GTip {
+                    visible: appButton.hovered && !menu.opened
+                    text: appButton.entry.windows.length === 1 ? appButton.entry.windows[0].title : appButton.entry.info.name
                 }
             }
         }
-        
-        // System Tray
-        Row {
-            Layout.alignment: Qt.AlignRight
-            Layout.rightMargin: 0
-            spacing: 0
-            
-            // Network
-            Item {
-                width: 32; height: 48
-                Text { anchors.centerIn: parent; text: "📶"; font.pixelSize: 14; color: "#fff"; opacity: 0.8 }
-                MouseArea { anchors.fill: parent; hoverEnabled: true; ToolTip.visible: containsMouse; ToolTip.text: "Connected" }
-            }
-            
-            // Volume
-            Item {
-                width: 36; height: 48
-                Text { 
-                    anchors.centerIn: parent
-                    text: volumeLevel === 0 ? "🔇" : (volumeLevel < 33 ? "🔈" : (volumeLevel < 66 ? "🔉" : "🔊"))
-                    font.pixelSize: 14; color: "#fff"; opacity: 0.8 
-                }
-                
-                MouseArea {
-                    id: volMouse
-                    anchors.fill: parent
+    }
+
+    // ------------------------------------------------------------- tray (right)
+    Row {
+        anchors.right: parent.right
+        anchors.rightMargin: 4
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        spacing: 2
+
+        Row {   // workspace switcher
+            id: workspaces
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 4
+            rightPadding: 6
+            Repeater {
+                model: bar.wm ? bar.wm.workspaceCount : 0
+                delegate: MouseArea {
+                    id: ws
+                    width: UI.px(22); height: UI.px(28)
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: volPopup.opened ? volPopup.close() : volPopup.open()
-                }
-                
-                Popup {
-                    id: volPopup
-                    y: -height - 10  // Just above taskbar
-                    x: parent.width - width  // Right-align
-                    width: 220
-                    height: 60
-                    modal: false
-                    focus: true
-                    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-                    
-                    background: Rectangle {
-                        color: Qt.rgba(0.1, 0.12, 0.18, 0.95); radius: 10
-                        border.width: 1; border.color: Qt.rgba(0.4, 0.6, 0.9, 0.3)
-                        
-                        // Shadow
-                        Rectangle {
-                            anchors.fill: parent; anchors.margins: -6; z: -1; radius: 14; color: Qt.rgba(0,0,0,0.5)
+                    readonly property bool current: bar.wm.workspace === index
+                    readonly property int count: { var n = bar.wm.windows.length; return bar.wm.workspaceWindowCount(index) }
+                    onClicked: bar.wm.switchWorkspace(index)
+                    onWheel: function (wheel) { bar.wm.switchWorkspace(bar.wm.workspace + (wheel.angleDelta.y < 0 ? 1 : -1)) }
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: UI.px(18); height: UI.px(18)
+                        radius: 5
+                        color: ws.current ? UI.accent : (ws.containsMouse ? UI.hover : "transparent")
+                        border.color: ws.current ? "transparent" : (ws.count > 0 ? UI.borderStrong : UI.border)
+                        Text {
+                            anchors.centerIn: parent
+                            text: index + 1
+                            color: ws.current ? UI.accentText : (ws.count > 0 ? UI.text : UI.textFaint)
+                            font.pixelSize: UI.px(10)
+                            font.bold: ws.current
                         }
                     }
-                    
-                    contentItem: RowLayout {
-                        anchors.fill: parent
-                        anchors.margins: 16
-                        spacing: 14
-                        
-                        Text { text: "🔊"; font.pixelSize: 16; color: "#fff" }
-                        
-                        Slider {
-                            id: volSlider
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 24
-                            from: 0; to: 100
-                            value: volumeLevel
-                            onMoved: Storage.setSystemVolume(value)
-                            
-                            background: Rectangle {
-                                x: volSlider.leftPadding
-                                y: volSlider.topPadding + volSlider.availableHeight / 2 - height / 2
-                                implicitWidth: 140
-                                implicitHeight: 6
-                                width: volSlider.availableWidth
-                                height: 6
-                                radius: 3
-                                color: Qt.rgba(1,1,1,0.15)
-                                
-                                Rectangle {
-                                    width: volSlider.visualPosition * parent.width
-                                    height: parent.height
-                                    color: "#4a9eff"
-                                    radius: 3
-                                }
-                            }
-                            
-                            handle: Rectangle {
-                                x: volSlider.leftPadding + volSlider.visualPosition * (volSlider.availableWidth - width)
-                                y: volSlider.topPadding + volSlider.availableHeight / 2 - height / 2
-                                implicitWidth: 16
-                                implicitHeight: 16
-                                radius: 8
-                                color: volSlider.pressed ? "#fff" : "#eee"
-                                border.width: 2
-                                border.color: "#4a9eff"
-                                
-                                // Glow on press
-                                Rectangle {
-                                    visible: volSlider.pressed
-                                    anchors.centerIn: parent
-                                    width: parent.width + 8
-                                    height: parent.height + 8
-                                    radius: width / 2
-                                    color: "transparent"
-                                    border.width: 2
-                                    border.color: Qt.rgba(0.3, 0.6, 1, 0.5)
-                                }
-                            }
-                        }
-                        
-                        Text { 
-                            text: Math.round(volumeLevel)
-                            color: "#fff"; font.pixelSize: 13; font.bold: true
-                            Layout.preferredWidth: 30
-                            horizontalAlignment: Text.AlignRight
-                        }
-                    }
+                    GTip { text: "Workspace " + (index + 1) + (ws.count ? "  ·  " + ws.count + " window" + (ws.count > 1 ? "s" : "") : "") + "  (Ctrl+Alt+" + (index + 1) + ")"; visible: ws.containsMouse }
                 }
             }
-            
-            // Clock
+        }
+
+        MouseArea {
+            id: trayIcons
+            width: trayRow.implicitWidth + 18
+            height: parent.height - 12
+            anchors.verticalCenter: parent.verticalCenter
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: bar.quickSettingsRequested()
+            onWheel: function (wheel) {
+                Prefs.setVolume(Prefs.volume + (wheel.angleDelta.y > 0 ? 5 : -5))
+                Prefs.setMuted(false)
+            }
+            Rectangle { anchors.fill: parent; radius: UI.radius; color: trayIcons.containsMouse ? UI.hover : "transparent" }
+            Row {
+                id: trayRow
+                anchors.centerIn: parent
+                spacing: 10
+                Icon {   // background file transfer in progress
+                    visible: Storage.busy
+                    name: "refresh"
+                    size: UI.px(15)
+                    anchors.verticalCenter: parent.verticalCenter
+                    RotationAnimation on rotation { running: Storage.busy; from: 0; to: 360; duration: 1000; loops: Animation.Infinite }
+                }
+                Row {
+                    id: cpuReadout
+                    spacing: 3
+                    visible: System.hasStats
+                    anchors.verticalCenter: parent.verticalCenter
+                    Icon { name: "cpu"; size: UI.px(13); opacity: 0.75; anchors.verticalCenter: parent.verticalCenter }
+                    Text {
+                        font.weight: UI.textWeight
+                        text: Math.round(System.cpuPercent) + "%"
+                        color: System.cpuPercent > 80 ? UI.warning : UI.textDim
+                        font.pixelSize: UI.px(11)
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                    HoverHandler { id: cpuHover }
+                    GTip { text: "CPU usage: " + Math.round(System.cpuPercent) + "%  ·  click for Task Manager"; visible: cpuHover.hovered }
+                    TapHandler { onTapped: UI.wm.openApp("TaskManager", {}) }
+                }
+                Icon { name: "wifi"; size: UI.px(13); anchors.verticalCenter: parent.verticalCenter }
+                Icon {
+                    name: Prefs.muted || Prefs.volume === 0 ? "mute" : (Prefs.volume < 50 ? "volume-low" : "volume")
+                    size: UI.px(17)
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+            }
+            GTip { text: "Quick settings  ·  scroll to change volume (" + Prefs.volume + "%)"; visible: trayIcons.containsMouse }
+        }
+
+        MouseArea {
+            id: clock
+            width: clockCol.implicitWidth + 20
+            height: parent.height - 12
+            anchors.verticalCenter: parent.verticalCenter
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: bar.calendarRequested()
+            Rectangle { anchors.fill: parent; radius: UI.radius; color: clock.containsMouse ? UI.hover : "transparent" }
+            Column {
+                id: clockCol
+                anchors.centerIn: parent
+                Text {
+                    elide: Text.ElideRight
+                    anchors.right: parent.right
+                    text: UI.timeText(UI.now)
+                    color: UI.text; font.pixelSize: UI.px(12); font.weight: Font.Medium
+                }
+                Text {
+                    elide: Text.ElideRight
+                    font.weight: UI.textWeight
+                    anchors.right: parent.right
+                    text: Qt.formatDate(UI.now, "d MMM yyyy")
+                    color: UI.textDim; font.pixelSize: UI.px(11)
+                }
+            }
             Rectangle {
-                id: clockWidget
-                width: 80; height: 48
-                color: clockMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.08) : "transparent"
-                
-                // Current time property that updates every second
-                property date currentTime: new Date()
-                
-                Timer {
-                    interval: 1000
-                    running: true
-                    repeat: true
-                    onTriggered: clockWidget.currentTime = new Date()
-                }
-                
-                Column {
-                    anchors.centerIn: parent
-                    spacing: -2
-                    Text { 
-                        text: Qt.formatTime(clockWidget.currentTime, "h:mm AP")
-                        color: "#fff"; font.pixelSize: 12; font.weight: Font.Medium
-                        anchors.horizontalCenter: parent.horizontalCenter
-                    }
-                    Text { 
-                        text: Qt.formatDate(clockWidget.currentTime, "M/d/yyyy")
-                        color: "#aaa"; font.pixelSize: 10
-                        anchors.horizontalCenter: parent.horizontalCenter
-                    }
-                }
-                
-                MouseArea {
-                    id: clockMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: calendarPopup.opened ? calendarPopup.close() : calendarPopup.open()
-                }
-                
-                // Calendar Popup - Windows 11 Style
-                Popup {
-                    id: calendarPopup
-                    y: -height - 58  // Position above taskbar (taskbar height ~48px + margin)
-                    x: parent.width - width  // Right-align with clock
-                    width: 320
-                    height: 400
-                    modal: false
-                    focus: true
-                    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-                    
-                    property date currentDate: new Date()
-                    property date viewDate: new Date()
-                    property int viewMonth: viewDate.getMonth()
-                    property int viewYear: viewDate.getFullYear()
-                    
-                    function daysInMonth(month, year) {
-                        return new Date(year, month + 1, 0).getDate()
-                    }
-                    
-                    function firstDayOfMonth(month, year) {
-                        return new Date(year, month, 1).getDay()
-                    }
-                    
-                    function prevMonth() {
-                        if (viewMonth === 0) {
-                            viewMonth = 11
-                            viewYear--
-                        } else {
-                            viewMonth--
-                        }
-                        viewDate = new Date(viewYear, viewMonth, 1)
-                    }
-                    
-                    function nextMonth() {
-                        if (viewMonth === 11) {
-                            viewMonth = 0
-                            viewYear++
-                        } else {
-                            viewMonth++
-                        }
-                        viewDate = new Date(viewYear, viewMonth, 1)
-                    }
-                    
-                    function goToToday() {
-                        currentDate = new Date()
-                        viewDate = new Date()
-                        viewMonth = viewDate.getMonth()
-                        viewYear = viewDate.getFullYear()
-                    }
-                    
-                    background: Rectangle {
-                        color: Qt.rgba(0.1, 0.12, 0.18, 0.98)
-                        radius: 12
-                        border.width: 1
-                        border.color: Qt.rgba(0.4, 0.6, 0.9, 0.3)
-                        
-                        // Shadow
-                        Rectangle {
-                            anchors.fill: parent
-                            anchors.margins: -6
-                            z: -1
-                            radius: 16
-                            color: Qt.rgba(0, 0, 0, 0.5)
-                        }
-                    }
-                    
-                    contentItem: Column {
-                        spacing: 12
-                        padding: 16
-                        
-                        // Current time - large display
-                        Column {
-                            width: parent.width - 32
-                            spacing: 4
-                            
-                            Text {
-                                text: Qt.formatTime(calendarPopup.currentDate, "h:mm:ss AP")
-                                font.pixelSize: 42
-                                font.family: "Segoe UI"
-                                font.weight: Font.Light
-                                color: "#ffffff"
-                            }
-                            
-                            Text {
-                                text: Qt.formatDate(calendarPopup.currentDate, "dddd, MMMM d, yyyy")
-                                font.pixelSize: 14
-                                font.family: "Segoe UI"
-                                color: "#888888"
-                            }
-                        }
-                        
-                        // Divider
-                        Rectangle {
-                            width: parent.width - 32
-                            height: 1
-                            color: Qt.rgba(1, 1, 1, 0.1)
-                        }
-                        
-                        // Month navigation
-                        Row {
-                            width: parent.width - 32
-                            spacing: 8
-                            
-                            Rectangle {
-                                width: 32
-                                height: 32
-                                radius: 6
-                                color: prevMonthMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.15) : "transparent"
-                                
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "◀"
-                                    font.pixelSize: 14
-                                    color: "#ffffff"
-                                }
-                                
-                                MouseArea {
-                                    id: prevMonthMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: calendarPopup.prevMonth()
-                                }
-                            }
-                            
-                            Text {
-                                text: Qt.formatDate(new Date(calendarPopup.viewYear, calendarPopup.viewMonth, 1), "MMMM yyyy")
-                                font.pixelSize: 14
-                                font.weight: Font.DemiBold
-                                color: "#ffffff"
-                                horizontalAlignment: Text.AlignHCenter
-                                Layout.fillWidth: true
-                                width: parent.width - 80
-                            }
-                            
-                            Rectangle {
-                                width: 32
-                                height: 32
-                                radius: 6
-                                color: nextMonthMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.15) : "transparent"
-                                
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "▶"
-                                    font.pixelSize: 14
-                                    color: "#ffffff"
-                                }
-                                
-                                MouseArea {
-                                    id: nextMonthMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: calendarPopup.nextMonth()
-                                }
-                            }
-                        }
-                        
-                        // Day names header
-                        Row {
-                            width: parent.width - 32
-                            spacing: 0
-                            
-                            Repeater {
-                                model: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-                                
-                                Item {
-                                    width: (parent.width) / 7
-                                    height: 24
-                                    
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: modelData
-                                        font.pixelSize: 11
-                                        font.weight: Font.DemiBold
-                                        color: index === 0 || index === 6 ? "#888888" : "#aaaaaa"
-                                    }
-                                }
-                            }
-                        }
-                        
-                        // Calendar grid
-                        Grid {
-                            columns: 7
-                            width: parent.width - 32
-                            spacing: 0
-                            
-                            property int totalDays: calendarPopup.daysInMonth(calendarPopup.viewMonth, calendarPopup.viewYear)
-                            property int startDay: calendarPopup.firstDayOfMonth(calendarPopup.viewMonth, calendarPopup.viewYear)
-                            property int prevMonthDays: calendarPopup.viewMonth === 0 
-                                ? calendarPopup.daysInMonth(11, calendarPopup.viewYear - 1)
-                                : calendarPopup.daysInMonth(calendarPopup.viewMonth - 1, calendarPopup.viewYear)
-                            
-                            Repeater {
-                                model: 42  // 6 weeks x 7 days
-                                
-                                Rectangle {
-                                    width: (parent.width) / 7
-                                    height: 32
-                                    radius: 16
-                                    
-                                    property int dayNum: {
-                                        var startDay = calendarPopup.firstDayOfMonth(calendarPopup.viewMonth, calendarPopup.viewYear)
-                                        var totalDays = calendarPopup.daysInMonth(calendarPopup.viewMonth, calendarPopup.viewYear)
-                                        var prevMonthDays = calendarPopup.viewMonth === 0 
-                                            ? calendarPopup.daysInMonth(11, calendarPopup.viewYear - 1)
-                                            : calendarPopup.daysInMonth(calendarPopup.viewMonth - 1, calendarPopup.viewYear)
-                                        
-                                        if (index < startDay) {
-                                            return prevMonthDays - startDay + index + 1
-                                        } else if (index >= startDay + totalDays) {
-                                            return index - startDay - totalDays + 1
-                                        }
-                                        return index - startDay + 1
-                                    }
-                                    
-                                    property bool isCurrentMonth: {
-                                        var startDay = calendarPopup.firstDayOfMonth(calendarPopup.viewMonth, calendarPopup.viewYear)
-                                        var totalDays = calendarPopup.daysInMonth(calendarPopup.viewMonth, calendarPopup.viewYear)
-                                        return index >= startDay && index < startDay + totalDays
-                                    }
-                                    
-                                    property bool isToday: {
-                                        var today = calendarPopup.currentDate
-                                        return isCurrentMonth && 
-                                               dayNum === today.getDate() && 
-                                               calendarPopup.viewMonth === today.getMonth() && 
-                                               calendarPopup.viewYear === today.getFullYear()
-                                    }
-                                    
-                                    color: isToday ? "#4a9eff" : (dayMouse.containsMouse && isCurrentMonth ? Qt.rgba(1, 1, 1, 0.15) : "transparent")
-                                    
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: dayNum
-                                        font.pixelSize: 13
-                                        font.weight: isToday ? Font.Bold : Font.Normal
-                                        color: isToday ? "#ffffff" : (isCurrentMonth ? "#ffffff" : "#555555")
-                                    }
-                                    
-                                    MouseArea {
-                                        id: dayMouse
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        cursorShape: isCurrentMonth ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                    }
-                                }
-                            }
-                        }
-                        
-                        // Today button
-                        Rectangle {
-                            width: parent.width - 32
-                            height: 32
-                            radius: 6
-                            color: todayMouse.containsMouse ? Qt.rgba(0.3, 0.5, 0.8, 0.4) : Qt.rgba(1, 1, 1, 0.08)
-                            
-                            Text {
-                                anchors.centerIn: parent
-                                text: "📅 Go to Today"
-                                font.pixelSize: 12
-                                color: "#ffffff"
-                            }
-                            
-                            MouseArea {
-                                id: todayMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: calendarPopup.goToToday()
-                            }
-                        }
-                    }
-                    
-                    // Timer to update current time
-                    Timer {
-                        interval: 1000
-                        running: calendarPopup.opened
-                        repeat: true
-                        onTriggered: calendarPopup.currentDate = new Date()
-                    }
-                    
-                    onOpened: {
-                        currentDate = new Date()
-                        goToToday()
-                    }
-                }
+                visible: bar.wm && bar.wm.unreadCount > 0
+                anchors.right: parent.right; anchors.top: parent.top
+                anchors.margins: 3
+                width: 8; height: 8; radius: 4
+                color: UI.accent
             }
-            
-            // Show Desktop Button (Windows style)
+        }
+
+        MouseArea {   // show desktop sliver
+            id: showDesk
+            width: 10
+            height: parent.height
+            hoverEnabled: true
+            onClicked: bar.wm.showDesktop()
             Rectangle {
-                width: 12; height: 48
-                color: showDesktopMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.15) : "transparent"
-                
-                Rectangle {
-                    anchors.left: parent.left
-                    anchors.top: parent.top
-                    anchors.bottom: parent.bottom
-                    width: 1
-                    color: Qt.rgba(1, 1, 1, 0.1)
-                }
-                
-                MouseArea {
-                    id: showDesktopMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    onClicked: {
-                        for(var i=0; i<runningWindows.length; i++) {
-                            if(runningWindows[i]) runningWindows[i].minimizeWindow()
-                        }
-                    }
-                    ToolTip.visible: containsMouse
-                    ToolTip.text: "Show Desktop"
-                    ToolTip.delay: 1000
-                }
+                anchors.fill: parent
+                anchors.topMargin: 12; anchors.bottomMargin: 12
+                radius: 2
+                color: showDesk.containsMouse ? UI.hover : "transparent"
+                Rectangle { anchors.left: parent.left; width: 1; height: parent.height; color: UI.border }
             }
+            GTip { text: "Show desktop  (Ctrl+Alt+D)"; visible: showDesk.containsMouse }
         }
     }
 }

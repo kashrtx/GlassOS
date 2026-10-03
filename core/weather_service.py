@@ -1,451 +1,330 @@
 """
-GlassOS Weather Service - Real Weather Data Provider
-Uses Open-Meteo API (free, no API key required)
+GlassOS Weather - Open-Meteo (free, no API key), exposed to QML as ``WeatherService``.
+
+Data is always fetched in metric units; QML converts for display.
 """
 
+from __future__ import annotations
+
 import json
-from typing import Optional, Dict, Any, List
-from PySide6.QtCore import QObject, Signal, Slot, Property, QUrl, QThread
-from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
+import time
+from datetime import datetime
+from typing import Optional
+
+from PySide6.QtCore import QObject, Property, QUrl, QUrlQuery, Signal, Slot
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
+
+from . import log as _log
+
+log = _log.get("weather")
+MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+
+# code -> (description, day icon, night icon); icons live in qml/icons/wx-*.svg
+WEATHER_CODES = {
+    0: ("Clear", "wx-clear-day", "wx-clear-night"), 1: ("Mainly clear", "wx-partly-day", "wx-partly-night"),
+    2: ("Partly cloudy", "wx-partly-day", "wx-partly-night"), 3: ("Overcast", "wx-cloudy", "wx-cloudy"),
+    45: ("Fog", "wx-fog", "wx-fog"), 48: ("Icy fog", "wx-fog", "wx-fog"),
+    51: ("Light drizzle", "wx-drizzle", "wx-drizzle"), 53: ("Drizzle", "wx-drizzle", "wx-drizzle"),
+    55: ("Heavy drizzle", "wx-rain", "wx-rain"), 56: ("Freezing drizzle", "wx-drizzle", "wx-drizzle"),
+    57: ("Freezing drizzle", "wx-drizzle", "wx-drizzle"), 61: ("Light rain", "wx-drizzle", "wx-drizzle"),
+    63: ("Rain", "wx-rain", "wx-rain"), 65: ("Heavy rain", "wx-rain", "wx-rain"),
+    66: ("Freezing rain", "wx-rain", "wx-rain"), 67: ("Freezing rain", "wx-rain", "wx-rain"),
+    71: ("Light snow", "wx-snow", "wx-snow"), 73: ("Snow", "wx-snow", "wx-snow"), 75: ("Heavy snow", "wx-snow", "wx-snow"),
+    77: ("Snow grains", "wx-snow", "wx-snow"), 80: ("Light showers", "wx-drizzle", "wx-drizzle"),
+    81: ("Showers", "wx-rain", "wx-rain"), 82: ("Violent showers", "wx-thunder", "wx-thunder"),
+    85: ("Snow showers", "wx-snow", "wx-snow"), 86: ("Snow showers", "wx-snow", "wx-snow"),
+    95: ("Thunderstorm", "wx-thunder", "wx-thunder"), 96: ("Thunderstorm, hail", "wx-thunder", "wx-thunder"),
+    99: ("Severe thunderstorm", "wx-thunder", "wx-thunder"),
+}
+DEFAULT_LOCATION = {"name": "New York", "country": "United States", "admin": "New York",
+                    "latitude": 40.7128, "longitude": -74.006}
 
 
-class WeatherWorker(QObject):
-    """Worker for fetching weather data in background."""
-    
-    finished = Signal(dict)
-    error = Signal(str)
-    
-    def __init__(self, network_manager: QNetworkAccessManager):
-        super().__init__()
-        self.network_manager = network_manager
-        self._pending_replies = []
-    
-    def fetch_weather(self, lat: float, lon: float, city_name: str):
-        """Fetch weather data from Open-Meteo API."""
-        # Open-Meteo API - completely free, no API key needed
-        url = (
-            f"https://api.open-meteo.com/v1/forecast?"
-            f"latitude={lat}&longitude={lon}"
-            f"&current=temperature_2m,relative_humidity_2m,apparent_temperature,"
-            f"weather_code,wind_speed_10m,wind_direction_10m,precipitation,cloud_cover,pressure_msl"
-            f"&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,"
-            f"wind_speed_10m_max,sunrise,sunset,uv_index_max"
-            f"&timezone=auto"
-            f"&forecast_days=7"
-        )
-        
-        request = QNetworkRequest(QUrl(url))
-        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "GlassOS Weather/1.0")
-        
-        reply = self.network_manager.get(request)
-        reply.setProperty("city_name", city_name)
-        reply.setProperty("latitude", lat)
-        reply.setProperty("longitude", lon)
-        reply.finished.connect(lambda: self._handle_response(reply))
-        self._pending_replies.append(reply)
-    
-    def _handle_response(self, reply: QNetworkReply):
-        """Handle the API response."""
-        if reply in self._pending_replies:
-            self._pending_replies.remove(reply)
-        
-        if reply.error() != QNetworkReply.NetworkError.NoError:
-            self.error.emit(f"Network error: {reply.errorString()}")
-            reply.deleteLater()
-            return
-        
+def describe(code, is_day=True):
+    cond, day_icon, night_icon = WEATHER_CODES.get(int(code or 0), ("Unknown", "wx-cloudy", "wx-cloudy"))
+    return cond, (day_icon if is_day else night_icon)
+
+
+def _at(seq, i, default=0):
+    try:
+        value = seq[i]
+        return default if value is None else value
+    except (IndexError, TypeError):
+        return default
+
+
+def parse_forecast(data: dict) -> dict:
+    """Turn an Open-Meteo /forecast response into the dict the UI consumes."""
+    cur = data.get("current") or {}
+    daily = data.get("daily") or {}
+    hourly = data.get("hourly") or {}
+    is_day = bool(cur.get("is_day", 1))
+    cond, icon = describe(cur.get("weather_code", 0), is_day)
+
+    days = []
+    for i, date in enumerate(daily.get("time") or []):
+        d_cond, d_icon = describe(_at(daily.get("weather_code"), i), True)
         try:
-            data = json.loads(reply.readAll().data().decode())
-            city_name = reply.property("city_name")
-            
-            # Parse the response
-            result = self._parse_weather_data(data, city_name)
-            self.finished.emit(result)
-        except Exception as e:
-            self.error.emit(f"Parse error: {str(e)}")
-        finally:
-            reply.deleteLater()
-    
-    def _parse_weather_data(self, data: dict, city_name: str) -> dict:
-        """Parse Open-Meteo response into our format."""
-        current = data.get("current", {})
-        daily = data.get("daily", {})
-        
-        # Weather code to condition mapping
-        weather_codes = {
-            0: ("Clear", "☀️"),
-            1: ("Mainly Clear", "🌤️"),
-            2: ("Partly Cloudy", "⛅"),
-            3: ("Overcast", "☁️"),
-            45: ("Foggy", "🌫️"),
-            48: ("Icy Fog", "🌫️"),
-            51: ("Light Drizzle", "🌦️"),
-            53: ("Drizzle", "🌦️"),
-            55: ("Heavy Drizzle", "🌧️"),
-            61: ("Light Rain", "🌧️"),
-            63: ("Rain", "🌧️"),
-            65: ("Heavy Rain", "🌧️"),
-            71: ("Light Snow", "🌨️"),
-            73: ("Snow", "🌨️"),
-            75: ("Heavy Snow", "❄️"),
-            77: ("Snow Grains", "🌨️"),
-            80: ("Light Showers", "🌦️"),
-            81: ("Showers", "🌧️"),
-            82: ("Heavy Showers", "🌧️"),
-            85: ("Light Snow Showers", "🌨️"),
-            86: ("Snow Showers", "🌨️"),
-            95: ("Thunderstorm", "⛈️"),
-            96: ("Thunderstorm + Hail", "⛈️"),
-            99: ("Severe Thunderstorm", "🌩️"),
-        }
-        
-        code = current.get("weather_code", 0)
-        condition, icon = weather_codes.get(code, ("Unknown", "❓"))
-        
-        # Build forecast
-        forecast = []
-        # weekday() returns Monday=0, Sunday=6, so order accordingly
-        days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-        
-        # Import once outside the loop for efficiency
-        from datetime import datetime as dt
-        
-        if daily.get("time"):
-            for i in range(min(7, len(daily["time"]))):
-                day_code = daily.get("weather_code", [0])[i] if i < len(daily.get("weather_code", [])) else 0
-                day_cond, day_icon = weather_codes.get(day_code, ("Unknown", "❓"))
-                
-                # Get day name from date
-                date_str = daily["time"][i]
-                date_obj = dt.strptime(date_str, "%Y-%m-%d")
-                day_name = days[date_obj.weekday()]
-                
-                forecast.append({
-                    "day": day_name,
-                    "date": date_str,
-                    "icon": day_icon,
-                    "condition": day_cond,
-                    "high": round(daily.get("temperature_2m_max", [0])[i]) if i < len(daily.get("temperature_2m_max", [])) else 0,
-                    "low": round(daily.get("temperature_2m_min", [0])[i]) if i < len(daily.get("temperature_2m_min", [])) else 0,
-                    "precipitation": daily.get("precipitation_sum", [0])[i] if i < len(daily.get("precipitation_sum", [])) else 0,
-                    "uv_index": daily.get("uv_index_max", [0])[i] if i < len(daily.get("uv_index_max", [])) else 0,
-                    "sunrise": daily.get("sunrise", [""])[i] if i < len(daily.get("sunrise", [])) else "",
-                    "sunset": daily.get("sunset", [""])[i] if i < len(daily.get("sunset", [])) else "",
-                })
-        
-        return {
-            "city": city_name,
-            "temp": round(current.get("temperature_2m", 0)),
-            "feels_like": round(current.get("apparent_temperature", 0)),
-            "condition": condition,
-            "icon": icon,
-            "humidity": round(current.get("relative_humidity_2m", 0)),
-            "wind_speed": round(current.get("wind_speed_10m", 0)),
-            "wind_direction": current.get("wind_direction_10m", 0),
-            "pressure": round(current.get("pressure_msl", 0)),
-            "cloud_cover": current.get("cloud_cover", 0),
-            "precipitation": current.get("precipitation", 0),
-            "high": round(daily.get("temperature_2m_max", [0])[0]) if daily.get("temperature_2m_max") else 0,
-            "low": round(daily.get("temperature_2m_min", [0])[0]) if daily.get("temperature_2m_min") else 0,
-            "sunrise": daily.get("sunrise", [""])[0] if daily.get("sunrise") else "",
-            "sunset": daily.get("sunset", [""])[0] if daily.get("sunset") else "",
-            "uv_index": daily.get("uv_index_max", [0])[0] if daily.get("uv_index_max") else 0,
-            "forecast": forecast,
-            "timezone": data.get("timezone", ""),
-        }
+            label = datetime.strptime(date, "%Y-%m-%d").strftime("%a")
+        except ValueError:
+            label = date
+        days.append({
+            "day": "Today" if i == 0 else label, "date": date, "icon": d_icon, "condition": d_cond,
+            "high": round(_at(daily.get("temperature_2m_max"), i)),
+            "low": round(_at(daily.get("temperature_2m_min"), i)),
+            "rain": int(round(_at(daily.get("precipitation_probability_max"), i))),
+        })
+
+    hours = []
+    now_iso = str(cur.get("time", ""))
+    times = hourly.get("time") or []
+    start = 0
+    for i, t in enumerate(times):
+        if t[:13] >= now_iso[:13]:
+            start = i
+            break
+    for i in range(start, min(start + 24, len(times))):
+        _, h_icon = describe(_at(hourly.get("weather_code"), i), bool(_at(hourly.get("is_day"), i, 1)))
+        hours.append({
+            "time": "Now" if i == start else times[i][11:16],
+            "temp": round(_at(hourly.get("temperature_2m"), i)),
+            "icon": h_icon,
+            "rain": int(round(_at(hourly.get("precipitation_probability"), i))),
+        })
+
+    return {
+        "temp": round(cur.get("temperature_2m", 0) or 0),
+        "feelsLike": round(cur.get("apparent_temperature", 0) or 0),
+        "condition": cond, "icon": icon, "isDay": is_day,
+        "humidity": int(round(cur.get("relative_humidity_2m", 0) or 0)),
+        "windSpeed": int(round(cur.get("wind_speed_10m", 0) or 0)),
+        "windDirection": int(round(cur.get("wind_direction_10m", 0) or 0)),
+        "pressure": int(round(cur.get("pressure_msl", 0) or 0)),
+        "cloudCover": int(round(cur.get("cloud_cover", 0) or 0)),
+        "uvIndex": round(float(_at(daily.get("uv_index_max"), 0)), 1),
+        "sunrise": str(_at(daily.get("sunrise"), 0, ""))[11:16],
+        "sunset": str(_at(daily.get("sunset"), 0, ""))[11:16],
+        "high": days[0]["high"] if days else 0,
+        "low": days[0]["low"] if days else 0,
+        "forecast": days, "hourly": hours,
+    }
 
 
-class GeocodingWorker(QObject):
-    """Worker for geocoding city names to coordinates."""
-    
-    finished = Signal(list)
-    error = Signal(str)
-    
-    def __init__(self, network_manager: QNetworkAccessManager):
-        super().__init__()
-        self.network_manager = network_manager
-    
-    def search_city(self, query: str):
-        """Search for cities by name using Open-Meteo Geocoding API."""
-        url = f"https://geocoding-api.open-meteo.com/v1/search?name={query}&count=10&language=en&format=json"
-        
-        request = QNetworkRequest(QUrl(url))
-        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "GlassOS Weather/1.0")
-        
-        reply = self.network_manager.get(request)
-        reply.finished.connect(lambda: self._handle_response(reply))
-    
-    def _handle_response(self, reply: QNetworkReply):
-        """Handle geocoding response."""
-        if reply.error() != QNetworkReply.NetworkError.NoError:
-            self.error.emit(f"Search error: {reply.errorString()}")
-            reply.deleteLater()
-            return
-        
-        try:
-            data = json.loads(reply.readAll().data().decode())
-            results = data.get("results", [])
-            
-            cities = []
-            for r in results:
-                cities.append({
-                    "name": r.get("name", ""),
-                    "country": r.get("country", ""),
-                    "country_code": r.get("country_code", ""),
-                    "admin1": r.get("admin1", ""),  # State/Province
-                    "latitude": r.get("latitude", 0),
-                    "longitude": r.get("longitude", 0),
-                    "population": r.get("population", 0),
-                })
-            
-            self.finished.emit(cities)
-        except Exception as e:
-            self.error.emit(f"Parse error: {str(e)}")
-        finally:
-            reply.deleteLater()
+def _valid_location(loc):
+    """Return a sanitized location dict, or None if ``loc`` is unusable."""
+    if not isinstance(loc, dict):
+        return None
+    lat, lon = loc.get("latitude"), loc.get("longitude")
+    if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)) \
+            or not -90 <= lat <= 90 or not -180 <= lon <= 180:
+        return None
+    return {"name": str(loc.get("name", ""))[:80] or "Unknown", "country": str(loc.get("country", ""))[:80],
+            "admin": str(loc.get("admin", ""))[:80], "latitude": float(lat), "longitude": float(lon)}
+
+
+def parse_geocoding(data: dict) -> list:
+    out = []
+    for r in data.get("results") or []:
+        if not isinstance(r, dict) or not isinstance(r.get("latitude"), (int, float)) \
+                or not isinstance(r.get("longitude"), (int, float)):
+            continue
+        out.append({
+            "name": r.get("name", ""), "country": r.get("country", ""),
+            "admin": r.get("admin1", "") or "", "latitude": r.get("latitude", 0.0),
+            "longitude": r.get("longitude", 0.0),
+        })
+    return out
 
 
 class WeatherProvider(QObject):
-    """Main weather provider exposed to QML."""
-    
-    # Signals
-    weatherUpdated = Signal()
-    forecastUpdated = Signal()
-    hourlyUpdated = Signal()
-    searchResultsReady = Signal()
-    loadingChanged = Signal()
-    errorOccurred = Signal(str)
-    
-    SETTINGS_FILE = "weather_settings.json"
-    
-    def __init__(self, parent=None):
+    weatherChanged = Signal()
+    searchResultsChanged = Signal()
+    stateChanged = Signal()
+
+    def __init__(self, prefs, parent: Optional[QObject] = None):
         super().__init__(parent)
-        
-        self._network_manager = QNetworkAccessManager(self)
-        self._weather_worker = WeatherWorker(self._network_manager)
-        self._geocoding_worker = GeocodingWorker(self._network_manager)
-        
-        # Connect signals
-        self._weather_worker.finished.connect(self._on_weather_received)
-        self._weather_worker.error.connect(self._on_error)
-        self._geocoding_worker.finished.connect(self._on_search_results)
-        self._geocoding_worker.error.connect(self._on_error)
-        
-        # Current weather data
-        self._city = "New York"
-        self._country = "US"
-        self._temp = 0
-        self._feels_like = 0
-        self._condition = "Loading..."
-        self._icon = "⏳"
-        self._humidity = 0
-        self._wind_speed = 0
-        self._wind_direction = 0
-        self._pressure = 0
-        self._cloud_cover = 0
-        self._precipitation = 0
-        self._high = 0
-        self._low = 0
-        self._sunrise = ""
-        self._sunset = ""
-        self._uv_index = 0
-        self._visibility = 0
-        self._dew_point = 0
-        self._forecast = []
-        self._hourly = []
-        self._search_results = []
-        self._is_loading = False
-        self._last_updated = ""
-        
-        # Current location - will be loaded from settings
-        self._latitude = 40.7128  # NYC default
-        self._longitude = -74.0060
-        
-        # Load saved city on startup
-        self._load_settings()
-    
-    def _get_settings_path(self):
-        """Get the path to settings file."""
-        import os
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        return os.path.join(base_dir, "Storage", "Settings", self.SETTINGS_FILE)
-    
-    def _load_settings(self):
-        """Load saved city from settings file."""
-        try:
-            settings_path = self._get_settings_path()
-            import os
-            if os.path.exists(settings_path):
-                with open(settings_path, 'r') as f:
-                    settings = json.load(f)
-                    self._city = settings.get("city", "New York")
-                    self._country = settings.get("country", "US")
-                    self._latitude = settings.get("latitude", 40.7128)
-                    self._longitude = settings.get("longitude", -74.0060)
-                    print(f"🌤️ Loaded saved city: {self._city}")
-        except Exception as e:
-            print(f"⚠️ Could not load weather settings: {e}")
-    
-    def _save_settings(self):
-        """Save current city to settings file."""
-        try:
-            settings_path = self._get_settings_path()
-            import os
-            os.makedirs(os.path.dirname(settings_path), exist_ok=True)
-            with open(settings_path, 'w') as f:
-                json.dump({
-                    "city": self._city,
-                    "country": self._country,
-                    "latitude": self._latitude,
-                    "longitude": self._longitude
-                }, f)
-                print(f"💾 Saved city: {self._city}")
-        except Exception as e:
-            print(f"⚠️ Could not save weather settings: {e}")
-    
-    def _on_weather_received(self, data: dict):
-        """Handle received weather data."""
-        self._city = data.get("city", self._city)
-        self._temp = data.get("temp", 0)
-        self._feels_like = data.get("feels_like", 0)
-        self._condition = data.get("condition", "Unknown")
-        self._icon = data.get("icon", "❓")
-        self._humidity = data.get("humidity", 0)
-        self._wind_speed = data.get("wind_speed", 0)
-        self._wind_direction = data.get("wind_direction", 0)
-        self._pressure = data.get("pressure", 0)
-        self._cloud_cover = data.get("cloud_cover", 0)
-        self._precipitation = data.get("precipitation", 0)
-        self._high = data.get("high", 0)
-        self._low = data.get("low", 0)
-        self._sunrise = data.get("sunrise", "")
-        self._sunset = data.get("sunset", "")
-        self._uv_index = data.get("uv_index", 0)
-        self._forecast = data.get("forecast", [])
-        
-        from datetime import datetime
-        self._last_updated = datetime.now().strftime("%H:%M")
-        
-        self._is_loading = False
-        self.loadingChanged.emit()
-        self.weatherUpdated.emit()
-        self.forecastUpdated.emit()
-        
-        print(f"🌤️ Weather updated for {self._city}: {self._temp}°C, {self._condition}")
-    
-    def _on_search_results(self, results: list):
-        """Handle search results."""
-        self._search_results = results
-        self._is_loading = False
-        self.loadingChanged.emit()
-        self.searchResultsReady.emit()
-    
-    def _on_error(self, error: str):
-        """Handle errors."""
-        self._is_loading = False
-        self.loadingChanged.emit()
-        self.errorOccurred.emit(error)
-        print(f"⚠️ Weather error: {error}")
-    
-    # QML accessible methods
+        self._prefs = prefs
+        self._nam = QNetworkAccessManager(self)
+        self._weather_reply: Optional[QNetworkReply] = None
+        self._search_reply: Optional[QNetworkReply] = None
+        self._location = _valid_location(prefs.value("weather.location", None)) or dict(DEFAULT_LOCATION)
+        self._data = {}
+        self._results = []
+        self._loading = False
+        self._searching = False
+        self._error = ""
+        self._fetched_at = 0.0
+
+    # ----------------------------------------------------------- networking
+    def _get(self, url: str, params: dict) -> QNetworkReply:
+        q = QUrlQuery()
+        for k, v in params.items():
+            q.addQueryItem(k, str(v))
+        u = QUrl(url)
+        u.setQuery(q)
+        req = QNetworkRequest(u)
+        req.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "GlassOS/2.0 Weather")
+        req.setTransferTimeout(12000)
+        return self._nam.get(req)
+
     @Slot()
     def refresh(self):
-        """Refresh current weather."""
-        self._is_loading = True
-        self.loadingChanged.emit()
-        self._weather_worker.fetch_weather(self._latitude, self._longitude, self._city)
-    
-    @Slot(str)
-    def searchCity(self, query: str):
-        """Search for a city."""
-        if len(query) < 2:
-            return
-        self._is_loading = True
-        self.loadingChanged.emit()
-        self._geocoding_worker.search_city(query)
-    
-    @Slot(int)
-    def selectSearchResult(self, index: int):
-        """Select a city from search results."""
-        if 0 <= index < len(self._search_results):
-            city = self._search_results[index]
-            self._city = city["name"]
-            self._country = city["country_code"]
-            self._latitude = city["latitude"]
-            self._longitude = city["longitude"]
-            self._search_results = []
-            self.searchResultsReady.emit()
-            self._save_settings()  # Persist the selected city
+        if self._weather_reply is not None:
+            old, self._weather_reply = self._weather_reply, None
+            old.abort()
+        loc = self._location
+        reply = self._get("https://api.open-meteo.com/v1/forecast", {
+            "latitude": loc["latitude"], "longitude": loc["longitude"],
+            "current": "temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,"
+                       "cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m",
+            "hourly": "temperature_2m,precipitation_probability,weather_code,is_day",
+            "daily": "weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,uv_index_max,"
+                     "precipitation_probability_max",
+            "timezone": "auto", "forecast_days": 7,
+        })
+        self._weather_reply = reply
+        self._set_state(loading=True)
+        reply.finished.connect(lambda r=reply: self._on_weather(r))
+
+    @Slot()
+    def refreshIfStale(self):
+        if not self._loading and time.time() - self._fetched_at > 600:
             self.refresh()
-    
-    @Slot(float, float, str)
-    def setLocation(self, lat: float, lon: float, name: str):
-        """Set location directly."""
-        self._latitude = lat
-        self._longitude = lon
-        self._city = name
-        self.refresh()
-    
-    # Properties
-    @Property(str, notify=weatherUpdated)
-    def city(self): return self._city
-    
-    @Property(str, notify=weatherUpdated)
-    def country(self): return self._country
-    
-    @Property(int, notify=weatherUpdated)
-    def temp(self): return self._temp
-    
-    @Property(int, notify=weatherUpdated)
-    def feelsLike(self): return self._feels_like
-    
-    @Property(str, notify=weatherUpdated)
-    def condition(self): return self._condition
-    
-    @Property(str, notify=weatherUpdated)
-    def icon(self): return self._icon
-    
-    @Property(int, notify=weatherUpdated)
-    def humidity(self): return self._humidity
-    
-    @Property(int, notify=weatherUpdated)
-    def windSpeed(self): return self._wind_speed
-    
-    @Property(int, notify=weatherUpdated)
-    def windDirection(self): return self._wind_direction
-    
-    @Property(int, notify=weatherUpdated)
-    def pressure(self): return self._pressure
-    
-    @Property(int, notify=weatherUpdated)
-    def cloudCover(self): return self._cloud_cover
-    
-    @Property(float, notify=weatherUpdated)
-    def precipitation(self): return self._precipitation
-    
-    @Property(int, notify=weatherUpdated)
-    def high(self): return self._high
-    
-    @Property(int, notify=weatherUpdated)
-    def low(self): return self._low
-    
-    @Property(str, notify=weatherUpdated)
-    def sunrise(self): return self._sunrise
-    
-    @Property(str, notify=weatherUpdated)
-    def sunset(self): return self._sunset
-    
-    @Property(int, notify=weatherUpdated)
-    def uvIndex(self): return self._uv_index
-    
-    @Property(str, notify=weatherUpdated)
-    def lastUpdated(self): return self._last_updated
-    
-    @Property(list, notify=forecastUpdated)
-    def forecast(self): return self._forecast
-    
-    @Property(list, notify=searchResultsReady)
-    def searchResults(self): return self._search_results
-    
-    @Property(bool, notify=loadingChanged)
-    def isLoading(self): return self._is_loading
+
+    def _on_weather(self, reply: QNetworkReply):
+        reply.deleteLater()
+        if reply is not self._weather_reply:
+            return  # aborted or superseded by a newer request
+        self._weather_reply = None
+        if reply.error() != QNetworkReply.NetworkError.NoError:
+            log.warning("forecast request failed: %s", reply.errorString())
+            self._set_state(loading=False, error=_friendly(reply))
+            return
+        try:
+            self._data = parse_forecast(_read_json(reply))
+        except (ValueError, KeyError, TypeError) as exc:
+            log.warning("unexpected forecast payload: %s", exc)
+            self._set_state(loading=False, error="The weather service sent an unexpected response.")
+            return
+        self._data["updated"] = datetime.now().strftime("%H:%M")
+        self._fetched_at = time.time()
+        self._set_state(loading=False, error="")
+        self.weatherChanged.emit()
+
+    @Slot(str)
+    def search(self, query: str):
+        query = (query or "").strip()[:100]
+        if self._search_reply is not None:
+            old, self._search_reply = self._search_reply, None
+            old.abort()
+        if len(query) < 2:
+            self._results = []
+            self._searching = False
+            self.searchResultsChanged.emit()
+            self.stateChanged.emit()
+            return
+        reply = self._get("https://geocoding-api.open-meteo.com/v1/search",
+                          {"name": query, "count": 8, "language": "en", "format": "json"})
+        self._search_reply = reply
+        self._searching = True
+        self.stateChanged.emit()
+        reply.finished.connect(lambda r=reply: self._on_search(r))
+
+    def _on_search(self, reply: QNetworkReply):
+        reply.deleteLater()
+        if reply is not self._search_reply:
+            return
+        self._search_reply = None
+        self._searching = False
+        if reply.error() == QNetworkReply.NetworkError.NoError:
+            try:
+                self._results = parse_geocoding(_read_json(reply))
+            except (ValueError, TypeError, AttributeError):
+                self._results = []
+        else:
+            self._error = _friendly(reply)
+        self.stateChanged.emit()
+        self.searchResultsChanged.emit()
+
+    @Slot(int)
+    def choose(self, index: int):
+        if 0 <= index < len(self._results):
+            self._location = dict(self._results[index])
+            self._prefs.setValue("weather.location", self._location)
+            self._results = []
+            self.searchResultsChanged.emit()
+            self._data = {}
+            self.weatherChanged.emit()
+            self.refresh()
+
+    def _set_state(self, loading=None, error=None):
+        if loading is not None:
+            self._loading = loading
+        if error is not None:
+            self._error = error
+        self.stateChanged.emit()
+
+    # ------------------------------------------------------------ properties
+    @Property(bool, notify=stateChanged)
+    def loading(self):
+        return self._loading
+
+    @Property(bool, notify=stateChanged)
+    def searching(self):
+        return self._searching
+
+    @Property(str, notify=stateChanged)
+    def error(self):
+        return self._error
+
+    @Property(bool, notify=weatherChanged)
+    def hasData(self):
+        return bool(self._data)
+
+    @Property("QVariantMap", notify=weatherChanged)
+    def current(self):
+        return {k: v for k, v in self._data.items() if k not in ("forecast", "hourly")}
+
+    @Property("QVariantList", notify=weatherChanged)
+    def forecast(self):
+        return self._data.get("forecast", [])
+
+    @Property("QVariantList", notify=weatherChanged)
+    def hourly(self):
+        return self._data.get("hourly", [])
+
+    @Property(str, notify=weatherChanged)
+    def city(self):
+        return self._location.get("name", "")
+
+    @Property(str, notify=weatherChanged)
+    def region(self):
+        parts = [self._location.get("admin", ""), self._location.get("country", "")]
+        return ", ".join(p for p in parts if p and p != self._location.get("name"))
+
+    @Property("QVariantList", notify=searchResultsChanged)
+    def searchResults(self):
+        return self._results
+
+
+def _read_json(reply: QNetworkReply):
+    raw = bytes(reply.read(MAX_RESPONSE_BYTES + 1).data())
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise ValueError("response too large")
+    data = json.loads(raw.decode("utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("expected a JSON object")
+    return data
+
+
+def _friendly(reply: QNetworkReply) -> str:
+    err = reply.error()
+    offline = {QNetworkReply.NetworkError.HostNotFoundError, QNetworkReply.NetworkError.UnknownNetworkError,
+               QNetworkReply.NetworkError.TemporaryNetworkFailureError,
+               QNetworkReply.NetworkError.NetworkSessionFailedError,
+               QNetworkReply.NetworkError.ConnectionRefusedError}
+    if err in offline:
+        return "You appear to be offline."
+    if err in (QNetworkReply.NetworkError.TimeoutError, QNetworkReply.NetworkError.OperationCanceledError):
+        return "The weather service took too long to answer."
+    return reply.errorString() or "Network error"

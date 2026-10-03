@@ -1,353 +1,205 @@
 """
-GlassOS AdBlocker - URL Request Interceptor for AeroBrowser
-Blocks ads, trackers, and malware domains using pattern matching.
+GlassOS AdBlocker for AeroBrowser, exposed to QML as ``AdBlocker``.
+
+* Blocks with EasyList + EasyPrivacy (downloaded in the background, refreshed
+  every 4 days, cached in Storage/System/filters) plus a built-in fallback list.
+* Lists are parsed on a worker thread; the finished engine is swapped in
+  atomically, so browsing never waits for parsing.
+* Exposes generic element-hiding CSS that AeroBrowser injects into pages.
+
+Requires QtWebEngine (PySide6-Addons); GlassOS runs fine without it.
 """
 
-import re
+from __future__ import annotations
+
+import threading
+import time
 from pathlib import Path
-from typing import Set, List
-from PySide6.QtCore import QObject, Slot, Signal, Property, QUrl
-from PySide6.QtWebEngineCore import (
-    QWebEngineUrlRequestInterceptor,
-    QWebEngineUrlRequestInfo,
-    QWebEngineProfile
-)
+
+from PySide6.QtCore import QObject, Property, Qt, QTimer, QUrl, Signal, Slot
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
+from PySide6.QtWebEngineCore import QWebEngineUrlRequestInfo, QWebEngineUrlRequestInterceptor
+
+from . import log as _log
+from .adblock_rules import FilterEngine, should_block
+from .adblocker_lists import bundled_lists
+
+log = _log.get("adblock")
+
+FILTER_LISTS = {
+    "easylist": "https://easylist.to/easylist/easylist.txt",
+    "easyprivacy": "https://easylist.to/easylist/easyprivacy.txt",
+}
+REFRESH_SECONDS = 4 * 24 * 3600
+
+_TYPE_NAMES = {
+    "ResourceTypeStylesheet": "stylesheet", "ResourceTypeScript": "script", "ResourceTypeImage": "image",
+    "ResourceTypeFontResource": "font", "ResourceTypeObject": "object", "ResourceTypeMedia": "media",
+    "ResourceTypeXhr": "xmlhttprequest", "ResourceTypePing": "ping", "ResourceTypeSubFrame": "subdocument",
+    "ResourceTypeWebSocket": "websocket", "ResourceTypeFavicon": "image",
+}
 
 
-class AdBlocker(QWebEngineUrlRequestInterceptor):
-    """URL request interceptor that blocks ads and trackers."""
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._enabled = True
-        self._blocked_count = 0
-        self._blocked_domains: Set[str] = set()
-        self._blocked_patterns: List[re.Pattern] = []
-        self._whitelist: Set[str] = set()
-        self._domain_cache: dict = {}  # Cache for fast repeated lookups
-        
-        # Load default block lists
-        self._load_default_blocklist()
-    
-    def _load_default_blocklist(self):
-        """Load default ad and tracker domains to block."""
-        # Common ad networks and trackers
-        ad_domains = [
-            # Major ad networks
-            "doubleclick.net",
-            "googlesyndication.com",
-            "googleadservices.com",
-            "google-analytics.com",
-            "googletagmanager.com",
-            "googletagservices.com",
-            "adservice.google.com",
-            "pagead2.googlesyndication.com",
-            "adsense.google.com",
-            
-            # Facebook/Meta trackers
-            "facebook.net",
-            "fbcdn.net",
-            "connect.facebook.net",
-            "pixel.facebook.com",
-            
-            # Ad exchanges
-            "adsrvr.org",
-            "adnxs.com",
-            "criteo.com",
-            "criteo.net",
-            "outbrain.com",
-            "taboola.com",
-            "revcontent.com",
-            "mgid.com",
-            "zergnet.com",
-            
-            # Tracking/Analytics
-            "hotjar.com",
-            "fullstory.com",
-            "mouseflow.com",
-            "crazyegg.com",
-            "quantserve.com",
-            "scorecardresearch.com",
-            "chartbeat.com",
-            "segment.io",
-            "segment.com",
-            "mixpanel.com",
-            "amplitude.com",
-            "heapanalytics.com",
-            "mxpnl.com",
-            
-            # Common ad servers
-            "adroll.com",
-            "adform.net",
-            "adzerk.net",
-            "advertising.com",
-            "rubiconproject.com",
-            "pubmatic.com",
-            "openx.net",
-            "indexexchange.com",
-            "casalemedia.com",
-            "contextweb.com",
-            "bidswitch.net",
-            
-            # Popups and overlays
-            "popads.net",
-            "popcash.net",
-            "propellerads.com",
-            "exoclick.com",
-            "juicyads.com",
-            "trafficjunky.com",
-            
-            # Mobile ad networks
-            "appsflyer.com",
-            "adjust.com",
-            "branch.io",
-            "kochava.com",
-            "singular.net",
-            
-            # Social widgets (optional tracking)
-            "addthis.com",
-            "sharethis.com",
-            "addtoany.com",
-            
-            # Malware/Scam domains
-            "clickbooth.com",
-            "intellitxt.com",
-            "vibrantmedia.com",
-            
-            # Video ads
-            "innovid.com",
-            "spotxchange.com",
-            "teads.tv",
-            "tremorhub.com",
-            
-            # Native ads
-            "nativo.com",
-            "sharethrough.com",
-            "triplelift.com",
-            
-            # Retargeting
-            "perfectaudience.com",
-            "adacado.com",
-            "retargeter.com",
-            
-            # Data brokers
-            "bluekai.com",
-            "exelator.com",
-            "liveramp.com",
-            "lotame.com",
-            "acxiom.com",
-            
-            # Amazon ads
-            "amazon-adsystem.com",
-            "assoc-amazon.com",
-            
-            # Twitter/X ads
-            "ads-twitter.com",
-            "analytics.twitter.com",
-            
-            # Microsoft ads
-            "bat.bing.com",
-            "ads.microsoft.com",
-            
-            # Other trackers
-            "omtrdc.net",
-            "demdex.net",
-            "everesttech.net",
-            "2o7.net",
-            "imrworldwide.com",
-            "moatads.com",
-            "doubleverify.com",
-            "ias.com",
-        ]
-        
-        self._blocked_domains = set(ad_domains)
-        
-        # URL patterns to block (regex)
-        patterns = [
-            r'/ads/',
-            r'/ad/',
-            r'/adv/',
-            r'/advertisement/',
-            r'/banner/',
-            r'/banners/',
-            r'/sponsor/',
-            r'/tracking/',
-            r'/tracker/',
-            r'/pixel/',
-            r'/analytics\.js',
-            r'/gtag/',
-            r'/gtm\.js',
-            r'\.gif\?.*(?:track|click|imp)',
-            r'[?&]ad[_-]?id=',
-            r'[?&]campaign[_-]?id=',
-            r'[?&]click[_-]?id=',
-            r'/doubleclick/',
-            r'/pagead/',
-            r'/adserver/',
-            r'/adserv/',
-            r'popup',
-            r'popunder',
-        ]
-        
-        self._blocked_patterns = [re.compile(p, re.IGNORECASE) for p in patterns]
-    
-    def interceptRequest(self, info: QWebEngineUrlRequestInfo):
-        """Intercept and potentially block a URL request."""
-        if not self._enabled:
+class _Interceptor(QWebEngineUrlRequestInterceptor):
+    def __init__(self, owner: "AdBlockerProvider"):
+        super().__init__(owner)
+        self._owner = owner
+
+    def interceptRequest(self, info: QWebEngineUrlRequestInfo):  # noqa: N802 (Qt API)
+        owner = self._owner
+        if not owner._enabled:
             return
-        
         url = info.requestUrl()
-        host = url.host().lower()
-        
-        # Fast path: Check domain cache first
-        if host in self._domain_cache:
-            if self._domain_cache[host]:
-                info.block(True)
-                self._blocked_count += 1
-            return
-        
-        # Check whitelist first (quick rejection)
-        for domain in self._whitelist:
-            if domain in host:
-                self._domain_cache[host] = False
-                return
-        
-        # Efficient domain check using suffix matching
-        should_block = False
-        
-        # Split host into parts for suffix checking
-        # e.g., "ads.doubleclick.net" -> check "doubleclick.net", then "net"
-        parts = host.split('.')
-        for i in range(len(parts)):
-            suffix = '.'.join(parts[i:])
-            if suffix in self._blocked_domains:
-                should_block = True
-                break
-        
-        # Check URL patterns only if not already blocked (lazy evaluation)
-        if not should_block:
-            url_string = url.toString().lower()
-            for pattern in self._blocked_patterns:
-                if pattern.search(url_string):
-                    should_block = True
-                    break
-        
-        # Block third-party tracking pixels (only for images, cheap check)
-        if not should_block:
-            resource_type = info.resourceType()
-            if resource_type == QWebEngineUrlRequestInfo.ResourceTypeImage:
-                url_string = url.toString().lower() if 'url_string' not in dir() else url_string
-                if any(x in url_string for x in ('track', 'pixel', 'beacon', '1x1')):
-                    should_block = True
-        
-        # Cache the result for this host
-        self._domain_cache[host] = should_block
-        
-        if should_block:
+        rt = info.resourceType()
+        name = getattr(rt, "name", "")
+        main = name in ("ResourceTypeMainFrame", "ResourceTypeNavigationPreloadMainFrame")
+        if should_block(url.toString(), url.host(), info.firstPartyUrl().host(), main,
+                        owner._engine, _TYPE_NAMES.get(name, "other")):
             info.block(True)
-            self._blocked_count += 1
-    
-    @property
-    def enabled(self) -> bool:
-        return self._enabled
-    
-    @enabled.setter
-    def enabled(self, value: bool):
-        self._enabled = value
-    
-    @property
-    def blocked_count(self) -> int:
-        return self._blocked_count
-    
-    def reset_count(self):
-        self._blocked_count = 0
-    
-    def add_to_whitelist(self, domain: str):
-        """Add a domain to the whitelist."""
-        self._whitelist.add(domain.lower())
-    
-    def remove_from_whitelist(self, domain: str):
-        """Remove a domain from the whitelist."""
-        self._whitelist.discard(domain.lower())
-    
-    def add_blocked_domain(self, domain: str):
-        """Add a custom domain to block."""
-        self._blocked_domains.add(domain.lower())
-    
-    def remove_blocked_domain(self, domain: str):
-        """Remove a domain from the blocklist."""
-        self._blocked_domains.discard(domain.lower())
+            owner._bump()
 
 
 class AdBlockerProvider(QObject):
-    """QML-accessible provider for the ad blocker."""
-    
     enabledChanged = Signal()
     blockedCountChanged = Signal()
-    
-    def __init__(self, parent=None):
+    listsChanged = Signal()
+    _parsed = Signal(object, int)   # engine, rule count  (worker -> GUI thread)
+
+    def __init__(self, prefs, filters_dir: Path, parent=None):
         super().__init__(parent)
-        self._ad_blocker = AdBlocker(self)
-        self._profile = None
-    
-    def get_interceptor(self) -> AdBlocker:
-        """Get the underlying interceptor."""
-        return self._ad_blocker
-    
-    def install_on_profile(self, profile: QWebEngineProfile):
-        """Install the ad blocker on a WebEngine profile."""
-        self._profile = profile
-        profile.setUrlRequestInterceptor(self._ad_blocker)
-        print("🛡️ AdBlocker installed on WebEngine profile")
-    
+        self._prefs = prefs
+        self._dir = Path(filters_dir)
+        self._dir.mkdir(parents=True, exist_ok=True)
+        self._enabled = prefs.adblock
+        self._engine = None
+        self._rules = 0
+        self._css = ""
+        self._updating = False
+        self._count = 0
+        self._nam = None
+        self._pending = {}
+        self._interceptor = _Interceptor(self)
+        self._notify = QTimer(self)   # coalesce UI updates: pages fire hundreds of blocked requests
+        self._notify.setSingleShot(True)
+        self._notify.setInterval(300)
+        self._notify.timeout.connect(self.blockedCountChanged.emit)
+        self._parsed.connect(self._on_parsed, Qt.QueuedConnection)
+        self._load_cached()
+        if self._stale():
+            QTimer.singleShot(6000, self.updateLists)   # don't compete with startup
+
+    # ------------------------------------------------------------ install
+    def install(self, profile) -> bool:
+        if profile is not None and hasattr(profile, "setUrlRequestInterceptor"):
+            profile.setUrlRequestInterceptor(self._interceptor)
+            return True
+        return False
+
+    def _bump(self):
+        self._count += 1
+        if not self._notify.isActive():
+            self._notify.start()
+
+    # ------------------------------------------------------------ filter lists
+    def _stale(self) -> bool:
+        files = [self._dir / f"{k}.txt" for k in FILTER_LISTS]
+        return not all(f.exists() for f in files) or \
+            min(f.stat().st_mtime for f in files) < time.time() - REFRESH_SECONDS
+
+    def _load_cached(self):
+        texts, have = [], set()
+        for key in FILTER_LISTS:
+            f = self._dir / f"{key}.txt"
+            if f.exists():
+                try:
+                    texts.append(f.read_text(encoding="utf-8", errors="replace"))
+                    have.add(key)
+                except OSError as exc:
+                    log.warning("could not read %s: %s", f, exc)
+        threading.Thread(target=self._parse_worker, args=(texts, have), daemon=True, name="glassos-adblock").start()
+
+    def _parse_worker(self, texts, have=frozenset()):
+        t = time.time()
+        engine = FilterEngine()
+        for text in bundled_lists(have) + texts:
+            engine.add_text(text)
+        log.info("filter lists parsed: %d rules (%d skipped) in %.1fs", engine.rule_count, engine.skipped, time.time() - t)
+        self._parsed.emit(engine, engine.rule_count)
+
+    @Slot(object, int)
+    def _on_parsed(self, engine, count):
+        self._engine = engine          # atomic swap: the interceptor reads one reference
+        self._rules = count
+        self._css = engine.cosmetic_css()
+        self.listsChanged.emit()
+
+    @Slot()
+    def updateLists(self):
+        if self._updating:
+            return
+        self._nam = self._nam or QNetworkAccessManager(self)
+        self._updating = True
+        self._pending = {}
+        self.listsChanged.emit()
+        for key, url in FILTER_LISTS.items():
+            req = QNetworkRequest(QUrl(url))
+            req.setTransferTimeout(30000)
+            req.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "GlassOS/2.3 AeroBrowser")
+            reply = self._nam.get(req)
+            self._pending[key] = None
+            reply.finished.connect(lambda r=reply, k=key: self._on_list(k, r))
+
+    def _on_list(self, key, reply: QNetworkReply):
+        reply.deleteLater()
+        if reply.error() == QNetworkReply.NetworkError.NoError:
+            data = bytes(reply.readAll().data())
+            if data.lstrip().startswith(b"[Adblock") or b"||" in data[:20000]:
+                (self._dir / f"{key}.txt").write_bytes(data)
+                self._pending[key] = True
+            else:
+                log.warning("%s: unexpected content, keeping the cached copy", key)
+                self._pending[key] = False
+        else:
+            log.warning("could not download %s: %s", key, reply.errorString())
+            self._pending[key] = False
+        if all(v is not None for v in self._pending.values()):
+            self._updating = False
+            if any(self._pending.values()):
+                self._load_cached()
+            self.listsChanged.emit()
+
+    # ------------------------------------------------------------ properties
     @Property(bool, notify=enabledChanged)
     def enabled(self) -> bool:
-        return self._ad_blocker.enabled
-    
-    @enabled.setter
-    def enabled(self, value: bool):
-        if self._ad_blocker.enabled != value:
-            self._ad_blocker.enabled = value
-            self.enabledChanged.emit()
-            print(f"🛡️ AdBlocker {'enabled' if value else 'disabled'}")
-    
+        return self._enabled
+
     @Slot(bool)
     def setEnabled(self, value: bool):
-        self.enabled = value
-    
-    @Slot(result=bool)
-    def isEnabled(self) -> bool:
-        return self._ad_blocker.enabled
-    
+        value = bool(value)
+        if value != self._enabled:
+            self._enabled = value
+            self._prefs.setAdblock(value)
+            self.enabledChanged.emit()
+
     @Property(int, notify=blockedCountChanged)
     def blockedCount(self) -> int:
-        return self._ad_blocker.blocked_count
-    
-    @Slot(result=int)
-    def getBlockedCount(self) -> int:
-        return self._ad_blocker.blocked_count
-    
-    @Slot()
-    def resetCount(self):
-        self._ad_blocker.reset_count()
-        self.blockedCountChanged.emit()
-    
-    @Slot(str)
-    def addToWhitelist(self, domain: str):
-        self._ad_blocker.add_to_whitelist(domain)
-        print(f"✅ Whitelisted: {domain}")
-    
-    @Slot(str)
-    def removeFromWhitelist(self, domain: str):
-        self._ad_blocker.remove_from_whitelist(domain)
-        print(f"❌ Removed from whitelist: {domain}")
-    
-    @Slot(str)
-    def addBlockedDomain(self, domain: str):
-        self._ad_blocker.add_blocked_domain(domain)
-        print(f"🚫 Added to blocklist: {domain}")
-    
-    @Slot(str)
-    def removeBlockedDomain(self, domain: str):
-        self._ad_blocker.remove_blocked_domain(domain)
-        print(f"✅ Removed from blocklist: {domain}")
+        return self._count
+
+    @Property(int, notify=listsChanged)
+    def ruleCount(self) -> int:
+        return self._rules
+
+    @Property(bool, notify=listsChanged)
+    def updating(self) -> bool:
+        return self._updating
+
+    @Property(str, notify=listsChanged)
+    def listsUpdated(self) -> str:
+        files = [self._dir / f"{k}.txt" for k in FILTER_LISTS if (self._dir / f"{k}.txt").exists()]
+        if not files:
+            return ""
+        return time.strftime("%b %d, %H:%M", time.localtime(max(f.stat().st_mtime for f in files)))
+
+    @Property(str, notify=listsChanged)
+    def cosmeticCss(self) -> str:
+        return self._css

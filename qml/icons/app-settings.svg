@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+<defs>
+ <linearGradient id="bg" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" stop-color="#CBD5E1"/><stop offset="1" stop-color="#475569"/></linearGradient>
+ <linearGradient id="hl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF" stop-opacity="0.38"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/></linearGradient>
+</defs>
+<rect x="3" y="3" width="58" height="58" rx="15" fill="url(#bg)"/>
+<path d="M18 3h28a15 15 0 0 1 15 15v4C47 28 17 28 3 22v-4A15 15 0 0 1 18 3z" fill="url(#hl)"/>
+<rect x="3.5" y="3.5" width="57" height="57" rx="14.5" fill="none" stroke="#FFFFFF" stroke-opacity="0.22"/>
+<g transform="translate(12.8 12.8) scale(1.6)"><g fill="none" stroke="#FFFFFF" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10.81 2.88 L13.19 2.88 L13.82 5.24 L15.49 5.93 L17.61 4.71 L19.29 6.39 L18.07 8.51 L18.76 10.18 L21.12 10.81 L21.12 13.19 L18.76 13.82 L18.07 15.49 L19.29 17.61 L17.61 19.29 L15.49 18.07 L13.82 18.76 L13.19 21.12 L10.81 21.12 L10.18 18.76 L8.51 18.07 L6.39 19.29 L4.71 17.61 L5.93 15.49 L5.24 13.82 L2.88 13.19 L2.88 10.81 L5.24 10.18 L5.93 8.51 L4.71 6.39 L6.39 4.71 L8.51 5.93 L10.18 5.24Z"/><circle cx="12" cy="12" r="3"/></g></g>
+</svg>

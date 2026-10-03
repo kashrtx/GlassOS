@@ -1,0 +1,24 @@
+Welcome to GlassOS 2.0 💎
+==========================
+
+Things to try
+-------------
+• Ctrl+Space ............ search apps, files, do maths ("12*7"), or search the web
+• Drag a window to a screen edge or corner to snap it (top edge = maximize)
+• Double-click a title bar to maximize, right-click it for more options
+• Alt+Tab ............... switch windows (keep pressing Tab, it commits on its own)
+• Ctrl+Alt+← / → / ↑ / ↓  snap the active window
+• Ctrl+Alt+T ............ Terminal  (try: neofetch, cowsay hi, matrix, accent pink)
+• Ctrl+Alt+E ............ Files
+• Ctrl+Alt+D ............ show the desktop
+• Ctrl+Alt+L ............ lock the screen
+• F11 ................... toggle full screen
+• Ctrl+Q ................ shut down
+
+Your files
+----------
+Everything in Files lives in the Storage/User folder next to GlassOS,
+so it's safe to experiment: GlassOS can't touch the rest of your computer.
+Deleted items go to the Recycle Bin and can be restored.
+
+Have fun! Right-click the desktop for more.
